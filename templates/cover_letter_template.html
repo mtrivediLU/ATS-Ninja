@@ -4,23 +4,50 @@
     <meta charset="utf-8">
     <style>
       @page {
-        margin: 0.8in;
+        margin: 0.68in 0.72in;
+        size: letter;
+      }
+      :root {
+        --primary: #003366;
+        --accent: #0070c0;
+        --text: #111111;
+        --muted: #3f4652;
       }
       body {
-        color: #111111;
-        font-family: Arial, Helvetica, sans-serif;
+        color: var(--text);
+        font-family: "Source Sans Pro", Arial, Helvetica, sans-serif;
         font-size: 11pt;
-        line-height: 1.5;
+        line-height: 1.52;
+      }
+      header {
+        border-bottom: 1.4px solid var(--primary);
+        margin-bottom: 18px;
+        padding-bottom: 10px;
+        text-align: center;
       }
       h1 {
-        font-size: 18pt;
-        margin: 0 0 4px;
+        color: var(--primary);
+        font-size: 24pt;
+        line-height: 1;
+        margin: 0 0 5px;
       }
-      .contact {
-        border-bottom: 1px solid #222222;
-        color: #333333;
-        margin-bottom: 18px;
-        padding-bottom: 8px;
+      .headline {
+        font-size: 12.8pt;
+        font-weight: 700;
+        margin-bottom: 7px;
+      }
+      .contact-row {
+        color: var(--muted);
+        font-size: 9.8pt;
+        margin-top: 2px;
+      }
+      .sep {
+        color: var(--accent);
+        margin: 0 8px;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: underline;
       }
       .date {
         margin-bottom: 18px;
@@ -34,8 +61,21 @@
     </style>
   </head>
   <body>
-    <h1>{{ name }}</h1>
-    <div class="contact">{{ email }} | {{ phone }}</div>
+    <header>
+      <h1>{{ name }}</h1>
+      {% if headline %}
+      <div class="headline">{{ headline }}</div>
+      {% endif %}
+      {% for row in contact_rows %}
+      <div class="contact-row">
+        {% for item in row %}
+          {% if not loop.first %}<span class="sep">|</span>{% endif %}
+          {% if item.href %}<a href="{{ item.href }}">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </header>
+
     <div class="date">{{ date }}</div>
 
     {% for paragraph in body %}

@@ -1,20 +1,66 @@
-\documentclass[a4paper,11pt]{article}
-\usepackage[margin=0.85in]{geometry}
-\usepackage{hyperref}
-\usepackage{enumitem}
-\usepackage{xcolor}
-\usepackage{titlesec}
-\usepackage{fontawesome5}
+\documentclass[letterpaper,11pt]{article}
 
-\pagenumbering{gobble}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[default]{sourcesanspro}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{xcolor}
+\usepackage[hidelinks,breaklinks=true]{hyperref}
+\usepackage[protrusion=true,expansion=false]{microtype}
+\input{glyphtounicode}
+\pdfgentounicode=1
+\urlstyle{same}
+
+\geometry{
+    letterpaper,
+    left   = 0.72in,
+    right  = 0.72in,
+    top    = 0.62in,
+    bottom = 0.62in
+}
+\setstretch{1.08}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{10pt}
+\pagestyle{empty}
+
+\definecolor{PRIMARYCOLOR}{RGB}{0, 51, 102}
+\definecolor{ACCENTCOLOR}{RGB}{0, 112, 192}
+\definecolor{RULECOLOR}{RGB}{0, 51, 102}
+
+\hypersetup{
+    colorlinks = true,
+    linkcolor  = ACCENTCOLOR,
+    filecolor  = ACCENTCOLOR,
+    urlcolor   = ACCENTCOLOR
+}
 
 \begin{document}
 
-{\Large \textbf{ {{ name }} }}\\
-\faEnvelope\ \href{mailto:{{ email }}}{{ email }} \quad
-\faPhone\ {{ phone }}
+\begin{center}
+    {\Huge\bfseries\color{PRIMARYCOLOR} {{ name }} } \\[5pt]
+{% if headline %}
+    {\large \textbf{ {{ headline }} }} \\[7pt]
+{% endif %}
+{% for row in contact_rows %}
+    \small
+{% for item in row %}
+{% if not loop.first %}
+    \ \ \textcolor{ACCENTCOLOR}{$|$} \ \
+{% endif %}
+{% if item.href %}
+    \href{ {{ item.href }} }{\underline{ {{ item.label }} }}
+{% else %}
+    {{ item.label }}
+{% endif %}
+{% endfor %}
+{% if not loop.last %} \\[4pt]{% endif %}
+{% endfor %}
+\end{center}
+
+\vspace{2pt}
+\textcolor{RULECOLOR}{\hrule}
+\vspace{12pt}
 
 {{ date }}
 

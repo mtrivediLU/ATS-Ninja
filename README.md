@@ -6,12 +6,13 @@ Resume Tailor AI is a local Streamlit application that turns a base resume PDF a
 
 - Upload a PDF resume and extract its text locally.
 - Paste a job description and calculate a before-generation ATS match score.
-- Generate a truthful, tailored resume with a local Ollama LLM.
-- Generate a concise cover letter based on the tailored resume.
+- Generate a truthful, tailored resume with a local Ollama LLM and a recruiter-grade technical resume format.
+- Generate a concise, role-specific cover letter based on the tailored resume.
 - View after-generation ATS score and score improvement.
 - Download the tailored resume and cover letter as PDFs.
 - Copy complete LaTeX source for both generated documents.
 - Review matched, missing, and AI-added keywords.
+- Use optional headline, location, LinkedIn, and portfolio fields for a polished candidate header.
 
 ## Prerequisites
 
@@ -60,9 +61,12 @@ Open the local URL Streamlit prints in your terminal.
 1. Upload a text-based PDF resume in the sidebar.
 2. Paste a job description with at least 500 characters.
 3. Enter your name, email, and phone number.
-4. Choose `llama3.2` or `qwen2.5:7b`.
-5. Click **Generate Tailored Materials**.
-6. Review the before and after ATS scores, download PDFs, or reveal the LaTeX code.
+4. Optionally add a professional headline, location, LinkedIn, and portfolio URL.
+5. Choose `llama3.2` or `qwen2.5:7b`.
+6. Click **Generate Tailored Materials**.
+7. Review the before and after ATS scores, download PDFs, or reveal the LaTeX code.
+
+The generated resume uses a compact technical resume structure: centered header, targeted headline, categorized technical skills, structured employer/date rows, quantified bullets, education, and certifications.
 
 The app only uses local processing and the local Ollama API at `http://localhost:11434`.
 

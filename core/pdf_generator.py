@@ -3,23 +3,26 @@ from __future__ import annotations
 import html
 import re
 from contextlib import redirect_stderr, redirect_stdout
-from io import BytesIO
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from core.latex_renderer import parse_resume_sections, split_cover_letter_paragraphs
+from core.latex_renderer import build_cover_letter_context, build_resume_context
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = PROJECT_ROOT / "templates"
+PRIMARY_COLOR = colors.HexColor("#003366")
+ACCENT_COLOR = colors.HexColor("#0070C0")
+TEXT_COLOR = colors.HexColor("#111111")
+MUTED_COLOR = colors.HexColor("#3F4652")
 
 
 def latex_to_pdf(latex_code: str, output_path: str) -> bytes:
@@ -30,7 +33,7 @@ def latex_to_pdf(latex_code: str, output_path: str) -> bytes:
     try:
         pdf_bytes = _weasyprint_pdf(html_content)
     except Exception:
-        pdf_bytes = _reportlab_pdf_from_text(text, title="Document")
+        pdf_bytes = _reportlab_text_pdf(text, title="Document")
 
     if output_path:
         Path(output_path).write_bytes(pdf_bytes)
@@ -38,39 +41,25 @@ def latex_to_pdf(latex_code: str, output_path: str) -> bytes:
 
 
 def generate_resume_pdf(resume_text: str, user_info: dict[str, str]) -> bytes:
-    """Generate a downloadable resume PDF from structured resume text."""
-    sections = parse_resume_sections(resume_text or "")
-    context = {
-        "name": _user_value(user_info, "name", "Your Name"),
-        "email": _user_value(user_info, "email", "your.email@example.com"),
-        "phone": _user_value(user_info, "phone", "Your Phone"),
-        **sections,
-    }
+    """Generate a polished downloadable resume PDF."""
+    context = build_resume_context(resume_text or "", user_info)
 
     try:
         html_content = _render_template("resume_template.html", context)
         return _weasyprint_pdf(html_content)
     except Exception:
-        return _reportlab_pdf_from_text(resume_text or "", title=context["name"])
+        return _reportlab_resume_pdf(context)
 
 
 def generate_cover_letter_pdf(cover_letter_text: str, user_info: dict[str, str]) -> bytes:
-    """Generate a downloadable cover letter PDF from cover letter text."""
-    from datetime import date
-
-    context = {
-        "name": _user_value(user_info, "name", "Your Name"),
-        "email": _user_value(user_info, "email", "your.email@example.com"),
-        "phone": _user_value(user_info, "phone", "Your Phone"),
-        "date": _format_date(date.today()),
-        "body": split_cover_letter_paragraphs(cover_letter_text or "", user_info),
-    }
+    """Generate a polished downloadable cover letter PDF."""
+    context = build_cover_letter_context(cover_letter_text or "", user_info)
 
     try:
         html_content = _render_template("cover_letter_template.html", context)
         return _weasyprint_pdf(html_content)
     except Exception:
-        return _reportlab_pdf_from_text(cover_letter_text or "", title=f"{context['name']} Cover Letter")
+        return _reportlab_cover_letter_pdf(context)
 
 
 def _render_template(template_name: str, context: dict[str, Any]) -> str:
@@ -92,55 +81,319 @@ def _weasyprint_pdf(html_content: str) -> bytes:
         return HTML(string=html_content).write_pdf()
 
 
-def _reportlab_pdf_from_text(text: str, title: str) -> bytes:
+def _reportlab_resume_pdf(context: dict[str, Any]) -> bytes:
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
+        pagesize=LETTER,
+        rightMargin=0.5 * inch,
+        leftMargin=0.5 * inch,
+        topMargin=0.45 * inch,
+        bottomMargin=0.45 * inch,
+        title=context.get("name", "Resume"),
+    )
+    styles = _styles()
+    story: list[Any] = []
+
+    story.extend(_header_flowables(context, styles, compact=True))
+    story.extend(_section_heading("Professional Summary", styles))
+    if context.get("summary"):
+        story.append(Paragraph(_escape(context["summary"]), styles["BodyTight"]))
+
+    if context.get("skills"):
+        story.extend(_section_heading("Technical Skills", styles))
+        for group in context["skills"]:
+            story.append(
+                Paragraph(
+                    f"<b>{_escape(group.get('category', 'Skills'))}:</b> "
+                    f"{_escape(group.get('items_text', ''))}",
+                    styles["BodyTight"],
+                )
+            )
+
+    if context.get("experience"):
+        story.extend(_section_heading("Professional Experience", styles))
+        for entry in context["experience"]:
+            story.extend(_entry_flowables(entry, styles, document.width, "company", "title"))
+
+    if context.get("education"):
+        story.extend(_section_heading("Education", styles))
+        for entry in context["education"]:
+            story.extend(_entry_flowables(entry, styles, document.width, "institution", "degree"))
+
+    if context.get("certifications"):
+        story.extend(_section_heading("Certifications", styles))
+        for item in context["certifications"]:
+            left = f"<b>{_escape(item.get('name', ''))}</b>"
+            if item.get("issuer"):
+                left += f", {_escape(item['issuer'])}"
+            if item.get("link"):
+                left += f" <font color='#0070C0'>{_escape(item.get('link_label', 'Verify'))}</font>"
+            right = _escape(item.get("date", ""))
+            story.append(_two_column_row(left, right, styles, document.width, "BodyTight"))
+
+    document.build(story)
+    return buffer.getvalue()
+
+
+def _reportlab_cover_letter_pdf(context: dict[str, Any]) -> bytes:
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=LETTER,
+        rightMargin=0.72 * inch,
+        leftMargin=0.72 * inch,
+        topMargin=0.62 * inch,
+        bottomMargin=0.62 * inch,
+        title=f"{context.get('name', 'Candidate')} Cover Letter",
+    )
+    styles = _styles()
+    story: list[Any] = []
+
+    story.extend(_header_flowables(context, styles, compact=False))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(_escape(context.get("date", "")), styles["Body"]))
+    story.append(Spacer(1, 8))
+
+    for paragraph in context.get("body", []):
+        story.append(Paragraph(_escape(paragraph), styles["LetterBody"]))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(f"Sincerely,<br/>{_escape(context.get('name', ''))}", styles["Body"]))
+
+    document.build(story)
+    return buffer.getvalue()
+
+
+def _header_flowables(context: dict[str, Any], styles: dict[str, ParagraphStyle], compact: bool) -> list[Any]:
+    flowables: list[Any] = [
+        Paragraph(_escape(context.get("name", "Your Name")), styles["Name"]),
+    ]
+    if context.get("headline"):
+        flowables.append(Paragraph(_escape(context["headline"]), styles["Headline"]))
+
+    for row in context.get("contact_rows", []):
+        labels = [item.get("label", "") for item in row if item.get("label")]
+        if labels:
+            flowables.append(Paragraph(_escape(" | ".join(labels)), styles["Contact"]))
+
+    flowables.append(Spacer(1, 3 if compact else 8))
+    flowables.append(HRFlowable(width="100%", thickness=1.2, color=PRIMARY_COLOR, spaceAfter=6))
+    return flowables
+
+
+def _section_heading(text: str, styles: dict[str, ParagraphStyle]) -> list[Any]:
+    return [
+        Spacer(1, 5),
+        Paragraph(_escape(text.upper()), styles["Section"]),
+        HRFlowable(width="100%", thickness=1.0, color=PRIMARY_COLOR, spaceBefore=0, spaceAfter=4),
+    ]
+
+
+def _entry_flowables(
+    entry: dict[str, Any],
+    styles: dict[str, ParagraphStyle],
+    width: float,
+    primary_key: str,
+    secondary_key: str,
+) -> list[Any]:
+    flowables: list[Any] = []
+    flowables.append(
+        _two_column_row(
+            f"<b>{_escape(entry.get(primary_key, ''))}</b>",
+            f"<b>{_escape(entry.get('location', ''))}</b>",
+            styles,
+            width,
+            "EntryPrimary",
+        )
+    )
+    flowables.append(
+        _two_column_row(
+            f"<i>{_escape(entry.get(secondary_key, ''))}</i>",
+            f"<i>{_escape(entry.get('dates', ''))}</i>",
+            styles,
+            width,
+            "EntrySecondary",
+        )
+    )
+    for bullet in entry.get("bullets", []):
+        flowables.append(Paragraph(f"&bull; {_escape(bullet)}", styles["Bullet"]))
+    flowables.append(Spacer(1, 3))
+    return flowables
+
+
+def _two_column_row(
+    left: str,
+    right: str,
+    styles: dict[str, ParagraphStyle],
+    width: float,
+    style_name: str,
+) -> Table:
+    table = Table(
+        [[Paragraph(left, styles[style_name]), Paragraph(right, styles[style_name + "Right"])]],
+        colWidths=[width * 0.72, width * 0.28],
+        hAlign="LEFT",
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    return table
+
+
+def _styles() -> dict[str, ParagraphStyle]:
+    base = getSampleStyleSheet()
+    return {
+        "Name": ParagraphStyle(
+            "Name",
+            parent=base["Title"],
+            alignment=1,
+            fontName="Helvetica-Bold",
+            fontSize=24,
+            leading=26,
+            textColor=PRIMARY_COLOR,
+            spaceAfter=3,
+        ),
+        "Headline": ParagraphStyle(
+            "Headline",
+            parent=base["BodyText"],
+            alignment=1,
+            fontName="Helvetica-Bold",
+            fontSize=12.5,
+            leading=15,
+            textColor=TEXT_COLOR,
+            spaceAfter=3,
+        ),
+        "Contact": ParagraphStyle(
+            "Contact",
+            parent=base["BodyText"],
+            alignment=1,
+            fontName="Helvetica",
+            fontSize=9,
+            leading=11,
+            textColor=MUTED_COLOR,
+            spaceAfter=1,
+        ),
+        "Section": ParagraphStyle(
+            "Section",
+            parent=base["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=12.5,
+            leading=14,
+            textColor=PRIMARY_COLOR,
+            spaceAfter=0,
+        ),
+        "Body": ParagraphStyle(
+            "Body",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=14,
+            textColor=TEXT_COLOR,
+            spaceAfter=7,
+        ),
+        "BodyTight": ParagraphStyle(
+            "BodyTight",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=9.8,
+            leading=12.3,
+            textColor=TEXT_COLOR,
+            spaceAfter=2,
+        ),
+        "LetterBody": ParagraphStyle(
+            "LetterBody",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=11,
+            leading=16,
+            textColor=TEXT_COLOR,
+            spaceAfter=10,
+        ),
+        "EntryPrimary": ParagraphStyle(
+            "EntryPrimary",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=10,
+            leading=12,
+            textColor=TEXT_COLOR,
+        ),
+        "EntryPrimaryRight": ParagraphStyle(
+            "EntryPrimaryRight",
+            parent=base["BodyText"],
+            alignment=2,
+            fontName="Helvetica",
+            fontSize=9.4,
+            leading=12,
+            textColor=TEXT_COLOR,
+        ),
+        "EntrySecondary": ParagraphStyle(
+            "EntrySecondary",
+            parent=base["BodyText"],
+            fontName="Helvetica-Oblique",
+            fontSize=9.4,
+            leading=11,
+            textColor=TEXT_COLOR,
+        ),
+        "EntrySecondaryRight": ParagraphStyle(
+            "EntrySecondaryRight",
+            parent=base["BodyText"],
+            alignment=2,
+            fontName="Helvetica-Oblique",
+            fontSize=9.4,
+            leading=11,
+            textColor=TEXT_COLOR,
+        ),
+        "BodyTightRight": ParagraphStyle(
+            "BodyTightRight",
+            parent=base["BodyText"],
+            alignment=2,
+            fontName="Helvetica-Oblique",
+            fontSize=9.4,
+            leading=12,
+            textColor=MUTED_COLOR,
+        ),
+        "Bullet": ParagraphStyle(
+            "Bullet",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=9.6,
+            leading=12,
+            leftIndent=9,
+            firstLineIndent=-7,
+            textColor=TEXT_COLOR,
+            spaceAfter=1,
+        ),
+    }
+
+
+def _reportlab_text_pdf(text: str, title: str) -> bytes:
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=LETTER,
         rightMargin=0.75 * inch,
         leftMargin=0.75 * inch,
         topMargin=0.75 * inch,
         bottomMargin=0.75 * inch,
         title=title,
     )
-    styles = getSampleStyleSheet()
-    body_style = ParagraphStyle(
-        "ResumeBody",
-        parent=styles["BodyText"],
-        fontName="Helvetica",
-        fontSize=10.5,
-        leading=14,
-        textColor=colors.black,
-        spaceAfter=6,
-    )
-    heading_style = ParagraphStyle(
-        "ResumeHeading",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=12,
-        leading=16,
-        textColor=colors.black,
-        spaceBefore=10,
-        spaceAfter=5,
-    )
-
+    styles = _styles()
     story: list[Any] = []
-    lines = [line.rstrip() for line in (text or "No content generated.").splitlines()]
-    for line in lines:
-        clean = html.escape(line.strip())
+    for line in [line.rstrip() for line in (text or "No content generated.").splitlines()]:
+        clean = _escape(line.strip())
         if not clean:
             story.append(Spacer(1, 4))
             continue
-        is_heading = clean.isupper() or clean.lower() in {
-            "professional summary",
-            "core skills",
-            "professional experience",
-            "education",
-            "certifications",
-        }
-        style = heading_style if is_heading else body_style
-        prefix = "• " if line.lstrip().startswith(("-", "*", "•")) else ""
-        story.append(Paragraph(f"{prefix}{clean.lstrip('-*• ').strip()}", style))
+        style = styles["Section"] if clean.isupper() else styles["Body"]
+        story.append(Paragraph(clean, style))
 
     document.build(story)
     return buffer.getvalue()
@@ -174,10 +427,5 @@ def _text_to_html(text: str) -> str:
     """
 
 
-def _user_value(user_info: dict[str, str] | None, key: str, default: str) -> str:
-    value = (user_info or {}).get(key, default)
-    return str(value or default).strip()
-
-
-def _format_date(value: Any) -> str:
-    return f"{value.strftime('%B')} {value.day}, {value.year}"
+def _escape(value: Any) -> str:
+    return html.escape(str(value or ""), quote=False)

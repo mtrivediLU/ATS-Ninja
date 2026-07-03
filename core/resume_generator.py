@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 try:
@@ -16,28 +17,69 @@ from core.ats_scorer import keyword_in_text
 
 
 RESUME_PROMPT = """
-You are an expert resume writer and ATS optimization specialist.
+You are an elite technical resume strategist, ATS optimization specialist, and recruiter-facing
+editor. Your output must read like a polished senior-candidate resume, not a generic rewrite.
 
-Read the base resume and the job description. Identify key skills, technologies, and
-qualifications from the job description. Rewrite the resume to emphasize matching
-experiences, add missing keywords naturally where the user has relevant experience, and
-use clear quantified achievements where possible.
+Read the base resume and job description. Identify the role's strongest buying signals:
+required skills, domain keywords, seniority, tools, business outcomes, and qualifications.
+Rewrite the resume to foreground the most relevant truthful evidence from the base resume.
+Use sharp, quantified bullets with this pattern when possible:
+Action verb + scope/system/product + tool/domain + measurable business or technical outcome.
 
 NEVER fabricate experience, jobs, or skills that are not in the original resume. Only rephrase, reorder, and emphasize existing content.
 
-Format the output as a structured resume with these exact section headers:
-Professional Summary
-Core Skills
-Professional Experience
-Education
-Certifications
+Quality rules:
+- Keep the resume concise, dense, and recruiter-friendly.
+- Prefer strong verbs: built, led, designed, shipped, automated, optimized, integrated, reduced.
+- Add missing ATS keywords only when the original resume supports them.
+- Do not keyword-stuff. Do not add unsupported certifications, employers, metrics, degrees, or tools.
+- Prefer categorized skills over a flat skills dump.
+- Prioritize the most relevant 4-6 roles/projects if the resume is long.
+- Use no Markdown tables, no code fences, and no commentary.
 
-Use bullet points for experience. Keep the resume truthful, concise, and ATS-friendly.
+Return exactly this parseable structure:
+
+Candidate Header
+Professional Headline: <targeted headline for this job, 6-12 words>
+Location: <location if present in resume or user info, otherwise blank>
+LinkedIn: <LinkedIn URL if present, otherwise blank>
+Portfolio: <portfolio/site URL if present, otherwise blank>
+Work Authorization: <work authorization if present, otherwise blank>
+Relocation: <relocation note if present, otherwise blank>
+
+Professional Summary
+<3-4 sentence summary, 70-95 words, tailored to the job and grounded in the resume>
+
+Technical Skills
+<Category>: <comma-separated skills>
+<Category>: <comma-separated skills>
+<Category>: <comma-separated skills>
+
+Professional Experience
+Company: <company> | Location: <location> | Title: <title> | Dates: <dates>
+- <impact bullet>
+- <impact bullet>
+- <impact bullet>
+
+Company: <company> | Location: <location> | Title: <title> | Dates: <dates>
+- <impact bullet>
+- <impact bullet>
+
+Education
+Institution: <school> | Location: <location> | Degree: <degree> | Dates: <dates>
+- <optional thesis, publication, honors, or relevant detail if present>
+
+Certifications
+- <certification name> | <year/date if present> | <verification URL if present>
 
 User Info:
 Name: {name}
 Email: {email}
 Phone: {phone}
+Preferred Headline: {headline}
+Location: {location}
+LinkedIn: {linkedin}
+Portfolio: {portfolio}
 
 Base Resume:
 {base_resume_text}
@@ -64,19 +106,33 @@ def generate_tailored_resume(
         raise ValueError("An LLM instance is required to generate a tailored resume.")
 
     prompt = PromptTemplate(
-        input_variables=["name", "email", "phone", "base_resume_text", "job_description"],
+        input_variables=[
+            "name",
+            "email",
+            "phone",
+            "headline",
+            "location",
+            "linkedin",
+            "portfolio",
+            "base_resume_text",
+            "job_description",
+        ],
         template=RESUME_PROMPT,
     )
     variables = {
         "name": (user_info or {}).get("name", "Your Name"),
         "email": (user_info or {}).get("email", "your.email@example.com"),
         "phone": (user_info or {}).get("phone", "Your Phone"),
+        "headline": (user_info or {}).get("headline", ""),
+        "location": (user_info or {}).get("location", ""),
+        "linkedin": (user_info or {}).get("linkedin", ""),
+        "portfolio": (user_info or {}).get("portfolio", ""),
         "base_resume_text": base_resume_text.strip(),
         "job_description": job_description.strip(),
     }
     result = _invoke_prompt(llm, prompt, variables)
 
-    return _extract_chain_text(result)
+    return _clean_generated_text(_extract_chain_text(result), label="Tailored Resume")
 
 
 def generate_resume_keywords_analysis(
@@ -115,6 +171,14 @@ def _extract_chain_text(result: Any) -> str:
     if content is not None:
         return str(content).strip()
     return str(result or "").strip()
+
+
+def _clean_generated_text(text: str, label: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^```(?:text|markdown|latex)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(rf"^\s*(?:{re.escape(label)}|Resume)\s*:?\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 
 def _invoke_prompt(llm: Any, prompt: PromptTemplate, variables: dict[str, str]) -> Any:

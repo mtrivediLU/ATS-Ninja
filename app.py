@@ -63,12 +63,24 @@ def render_tags(keywords: list[str], color_class: str) -> None:
     st.markdown(tag_html, unsafe_allow_html=True)
 
 
-def build_user_info(name: str, email: str, phone: str) -> dict[str, str]:
+def build_user_info(
+    name: str,
+    email: str,
+    phone: str,
+    headline: str = "",
+    location: str = "",
+    linkedin: str = "",
+    portfolio: str = "",
+) -> dict[str, str]:
     """Build a normalized user info dictionary."""
     return {
         "name": name.strip() or "Your Name",
         "email": email.strip() or "your.email@example.com",
         "phone": phone.strip() or "Your Phone",
+        "headline": headline.strip(),
+        "location": location.strip(),
+        "linkedin": linkedin.strip(),
+        "portfolio": portfolio.strip(),
     }
 
 
@@ -321,11 +333,15 @@ def main() -> None:
         name = st.text_input("Full Name")
         email = st.text_input("Email")
         phone = st.text_input("Phone")
+        headline = st.text_input("Professional Headline")
+        location = st.text_input("Location")
+        linkedin = st.text_input("LinkedIn")
+        portfolio = st.text_input("Portfolio / Website")
         model_name = st.selectbox("LLM Model", MODEL_OPTIONS, index=0)
         generate = st.button("Generate Tailored Materials", type="primary", use_container_width=True)
 
     if generate:
-        user_info = build_user_info(name, email, phone)
+        user_info = build_user_info(name, email, phone, headline, location, linkedin, portfolio)
         if validate_inputs(uploaded_file, job_description):
             with st.spinner("Analyzing resume and generating tailored materials..."):
                 generated = run_generation_pipeline(

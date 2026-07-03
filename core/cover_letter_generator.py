@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 try:
@@ -14,22 +15,31 @@ except ImportError:  # pragma: no cover - LangChain 1.x compatibility
 
 
 COVER_LETTER_PROMPT = """
-You are a professional career writer.
+You are an elite career writer. Write a crisp, credible cover letter that sounds like a
+strong candidate wrote it for this exact role, not a generic AI template.
 
-Write a confident, professional cover letter under 350 words. Reference specific
-experiences from the tailored resume, match the tone and requirements from the job
-description, and keep every claim grounded in the resume.
+Rules:
+- Keep it under 330 words.
+- Do not invent facts, metrics, companies, skills, or credentials.
+- Reference 2-3 specific experiences from the tailored resume that directly match the job.
+- Match the job description's priorities and tone.
+- Avoid empty phrases like "I am writing to express my interest" and "dynamic team."
+- Use confident, plain language.
+- Return body text only. Do not include the name/contact header or date; the document
+  template will add those.
 
 Structure:
-1. Header with the user's name, email, and phone.
-2. Opening paragraph: who the candidate is and what role they are targeting.
-3. One or two body paragraphs: relevant experience from the tailored resume.
-4. Closing paragraph: concise call to action.
+1. Salutation. Use "Dear Hiring Manager," unless a company, team, or recipient is obvious.
+2. Opening paragraph: role fit and strongest value proposition.
+3. One or two body paragraphs: specific evidence from the resume, tied to role requirements.
+4. Closing paragraph: direct, professional call to action.
 
 User Info:
 Name: {name}
 Email: {email}
 Phone: {phone}
+Professional Headline: {headline}
+Location: {location}
 
 Tailored Resume:
 {tailored_resume}
@@ -56,19 +66,29 @@ def generate_cover_letter(
         raise ValueError("An LLM instance is required to generate a cover letter.")
 
     prompt = PromptTemplate(
-        input_variables=["name", "email", "phone", "tailored_resume", "job_description"],
+        input_variables=[
+            "name",
+            "email",
+            "phone",
+            "headline",
+            "location",
+            "tailored_resume",
+            "job_description",
+        ],
         template=COVER_LETTER_PROMPT,
     )
     variables = {
         "name": (user_info or {}).get("name", "Your Name"),
         "email": (user_info or {}).get("email", "your.email@example.com"),
         "phone": (user_info or {}).get("phone", "Your Phone"),
+        "headline": (user_info or {}).get("headline", ""),
+        "location": (user_info or {}).get("location", ""),
         "tailored_resume": tailored_resume.strip(),
         "job_description": job_description.strip(),
     }
     result = _invoke_prompt(llm, prompt, variables)
 
-    return _extract_chain_text(result)
+    return _clean_generated_text(_extract_chain_text(result), label="Cover Letter")
 
 
 def _extract_chain_text(result: Any) -> str:
@@ -79,6 +99,14 @@ def _extract_chain_text(result: Any) -> str:
     if content is not None:
         return str(content).strip()
     return str(result or "").strip()
+
+
+def _clean_generated_text(text: str, label: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^```(?:text|markdown)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(rf"^\s*(?:{re.escape(label)}|Body)\s*:?\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 
 def _invoke_prompt(llm: Any, prompt: PromptTemplate, variables: dict[str, str]) -> Any:
