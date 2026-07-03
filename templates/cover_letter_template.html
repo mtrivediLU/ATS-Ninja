@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      @page {
+        margin: 0.8in;
+      }
+      body {
+        color: #111111;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 11pt;
+        line-height: 1.5;
+      }
+      h1 {
+        font-size: 18pt;
+        margin: 0 0 4px;
+      }
+      .contact {
+        border-bottom: 1px solid #222222;
+        color: #333333;
+        margin-bottom: 18px;
+        padding-bottom: 8px;
+      }
+      .date {
+        margin-bottom: 18px;
+      }
+      p {
+        margin: 0 0 12px;
+      }
+      .signature {
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>{{ name }}</h1>
+    <div class="contact">{{ email }} | {{ phone }}</div>
+    <div class="date">{{ date }}</div>
+
+    {% for paragraph in body %}
+    <p>{{ paragraph }}</p>
+    {% endfor %}
+
+    <p class="signature">Sincerely,<br>{{ name }}</p>
+  </body>
+</html>

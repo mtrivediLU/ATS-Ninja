@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      @page {
+        margin: 0.65in;
+      }
+      body {
+        color: #111111;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 10.5pt;
+        line-height: 1.38;
+      }
+      h1 {
+        font-size: 22pt;
+        margin: 0 0 4px;
+      }
+      .contact {
+        border-bottom: 1px solid #222222;
+        color: #333333;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+      }
+      h2 {
+        border-bottom: 1px solid #888888;
+        font-size: 12pt;
+        margin: 12px 0 6px;
+        padding-bottom: 2px;
+        text-transform: uppercase;
+      }
+      p {
+        margin: 0 0 6px;
+      }
+      ul {
+        margin: 0 0 8px 18px;
+        padding: 0;
+      }
+      li {
+        margin-bottom: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>{{ name }}</h1>
+    <div class="contact">{{ email }} | {{ phone }}</div>
+
+    <h2>Professional Summary</h2>
+    <p>{{ summary }}</p>
+
+    <h2>Core Skills</h2>
+    <ul>
+      {% for skill in skills %}
+      <li>{{ skill }}</li>
+      {% endfor %}
+    </ul>
+
+    <h2>Professional Experience</h2>
+    <ul>
+      {% for item in experience %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+
+    <h2>Education</h2>
+    <ul>
+      {% for item in education %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+
+    <h2>Certifications</h2>
+    <ul>
+      {% for item in certifications %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>

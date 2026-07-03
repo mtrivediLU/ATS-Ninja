@@ -1,0 +1,52 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[margin=0.7in]{geometry}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{fontawesome5}
+\usepackage{xcolor}
+
+\pagenumbering{gobble}
+\setlength{\parindent}{0pt}
+\setlist[itemize]{leftmargin=*, noitemsep, topsep=2pt}
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titlespacing*{\section}{0pt}{10pt}{5pt}
+
+\begin{document}
+
+{\LARGE \textbf{ {{ name }} }}\\
+\faEnvelope\ \href{mailto:{{ email }}}{{ email }} \quad
+\faPhone\ {{ phone }}
+
+\section*{Professional Summary}
+{{ summary }}
+
+\section*{Core Skills}
+\begin{itemize}
+{% for skill in skills %}
+  \item {{ skill }}
+{% endfor %}
+\end{itemize}
+
+\section*{Professional Experience}
+\begin{itemize}
+{% for item in experience %}
+  \item {{ item }}
+{% endfor %}
+\end{itemize}
+
+\section*{Education}
+\begin{itemize}
+{% for item in education %}
+  \item {{ item }}
+{% endfor %}
+\end{itemize}
+
+\section*{Certifications}
+\begin{itemize}
+{% for item in certifications %}
+  \item {{ item }}
+{% endfor %}
+\end{itemize}
+
+\end{document}

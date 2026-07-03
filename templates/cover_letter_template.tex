@@ -1,0 +1,28 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[margin=0.85in]{geometry}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fontawesome5}
+
+\pagenumbering{gobble}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{10pt}
+
+\begin{document}
+
+{\Large \textbf{ {{ name }} }}\\
+\faEnvelope\ \href{mailto:{{ email }}}{{ email }} \quad
+\faPhone\ {{ phone }}
+
+{{ date }}
+
+{% for paragraph in body %}
+{{ paragraph }}
+
+{% endfor %}
+Sincerely,\\
+{{ name }}
+
+\end{document}
