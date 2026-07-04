@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import re
+from dataclasses import fields
+from typing import Any
+
+from core.models import ContactInfo, Mode, ParsedInput, Profile
+from core.pdf_extractor import extract_text_from_pdf
+from core.profile_loader import cached_profile
+
+
+BANNED_EMAIL_DOMAINS = {"laurentian.ca"}
+ACTIVE_DEFAULT_EMAIL = "mihir1611t@gmail.com"
+
+
+def parse_input(
+    *,
+    uploaded_resume_pdf: Any | None = None,
+    resume_text: str = "",
+    job_description: str = "",
+    overrides: dict[str, str] | None = None,
+    logistics: dict[str, str] | None = None,
+    questions_text: str = "",
+    requested_mode: str = "",
+    profile: Profile | None = None,
+) -> ParsedInput:
+    """Parse all user-provided inputs into a normalized pipeline input."""
+    profile = profile or cached_profile()
+    extracted_pdf_text = extract_text_from_pdf(uploaded_resume_pdf) if uploaded_resume_pdf else ""
+    combined_resume_text = "\n\n".join(
+        part.strip() for part in [resume_text, extracted_pdf_text] if part and part.strip()
+    )
+    extracted_contacts = extract_contacts(combined_resume_text)
+    contacts = resolve_contacts(
+        overrides=overrides or {},
+        extracted=extracted_contacts,
+        profile=profile,
+        logistics=logistics or {},
+    )
+    questions = split_questions(questions_text)
+    mode = detect_mode(
+        requested_text=requested_mode,
+        job_description=job_description,
+        questions=questions,
+    )
+    return ParsedInput(
+        resume_text=combined_resume_text,
+        job_description=job_description.strip(),
+        contacts=contacts,
+        questions=questions,
+        logistics=logistics or {},
+        mode=mode,
+    )
+
+
+def extract_contacts(text: str) -> ContactInfo:
+    """Extract likely contact fields from resume text."""
+    text = text or ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    email = _first_match(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text)
+    phone = _first_match(r"(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}", text)
+    linkedin = _first_match(r"(?:https?://)?(?:www\.)?linkedin\.com/in/[A-Za-z0-9_-]+/?", text)
+    website = _first_website(text, linkedin)
+    location = _extract_location(lines)
+    name = _extract_name(lines)
+    return ContactInfo(
+        name=name,
+        phone=phone,
+        email=email,
+        linkedin=linkedin,
+        website=website,
+        location=location,
+    )
+
+
+def resolve_contacts(
+    *,
+    overrides: dict[str, str],
+    extracted: ContactInfo,
+    profile: Profile,
+    logistics: dict[str, str] | None = None,
+) -> ContactInfo:
+    """Resolve contacts using override, extracted, profile, then blank precedence."""
+    logistics = logistics or {}
+    resolved = ContactInfo()
+    source: dict[str, str] = {}
+    valid_fields = {field.name for field in fields(ContactInfo)} - {"source"}
+
+    for key in valid_fields:
+        override_value = _clean(overrides.get(key, ""))
+        extracted_value = _clean(getattr(extracted, key, ""))
+        profile_value = _clean(getattr(profile.contact, key, ""))
+        logistics_value = _clean(logistics.get(key, ""))
+
+        value = ""
+        chosen_source = ""
+        for candidate, candidate_source in [
+            (override_value, "override"),
+            (extracted_value, "uploaded_resume"),
+            (logistics_value, "override"),
+            (profile_value, "profile"),
+        ]:
+            if candidate:
+                value = candidate
+                chosen_source = candidate_source
+                break
+
+        if key == "email":
+            value, chosen_source = _resolve_email(
+                override_value=override_value,
+                extracted_value=extracted_value,
+                profile_value=profile_value,
+                profile=profile,
+            )
+
+        setattr(resolved, key, value)
+        if value:
+            source[key] = chosen_source or "profile"
+
+    resolved.source = source
+    return resolved
+
+
+def detect_mode(
+    *,
+    requested_text: str = "",
+    job_description: str = "",
+    questions: list[str] | None = None,
+) -> Mode:
+    """Detect generation mode silently from user intent, JD, and questions."""
+    requested = (requested_text or "").lower()
+    questions = questions or []
+    wants_cover = any(term in requested for term in ["cover letter", "covering letter", " cv "])
+    if requested.strip() == "cv" or requested.startswith("cv ") or requested.endswith(" cv"):
+        wants_cover = True
+    wants_resume = "resume" in requested or "résumé" in requested
+    wants_both = wants_cover and wants_resume or "both" in requested or "resume and cover" in requested
+
+    if questions and job_description.strip():
+        return Mode.RESUME_AND_QUESTIONS
+    if questions:
+        return Mode.QUESTIONS
+    if wants_both:
+        return Mode.RESUME_AND_COVER
+    if wants_cover:
+        return Mode.COVER_LETTER
+    if job_description.strip():
+        return Mode.RESUME
+    return Mode.RESUME
+
+
+def split_questions(text: str) -> list[str]:
+    """Split application or screening questions into paste-ready prompts."""
+    if not text or not text.strip():
+        return []
+
+    chunks = re.split(r"\n\s*\n|(?:^|\n)\s*(?:Q\d+[:.)]|\d+[.)])\s*", text.strip())
+    questions = [re.sub(r"\s+", " ", chunk).strip() for chunk in chunks if chunk.strip()]
+    return questions
+
+
+def _resolve_email(
+    *,
+    override_value: str,
+    extracted_value: str,
+    profile_value: str,
+    profile: Profile,
+) -> tuple[str, str]:
+    for value, source in [
+        (override_value, "override"),
+        (extracted_value, "uploaded_resume"),
+        (profile_value, "profile"),
+        (ACTIVE_DEFAULT_EMAIL, "profile"),
+    ]:
+        if value and not _is_banned_email(value, profile):
+            return value, source
+    return "", ""
+
+
+def _is_banned_email(email: str, profile: Profile) -> bool:
+    normalized = email.lower().strip()
+    domain = normalized.split("@")[-1] if "@" in normalized else ""
+    retired = {item.lower() for item in profile.retired_emails}
+    return normalized in retired or domain in BANNED_EMAIL_DOMAINS
+
+
+def _extract_name(lines: list[str]) -> str:
+    for line in lines[:5]:
+        if "@" in line or "linkedin" in line.lower() or any(char.isdigit() for char in line):
+            continue
+        words = line.split()
+        if 2 <= len(words) <= 4:
+            return line
+    return ""
+
+
+def _extract_location(lines: list[str]) -> str:
+    for line in lines[:12]:
+        lowered = line.lower()
+        if any(token in lowered for token in ["ontario", "canada", "toronto", "sudbury", "remote"]):
+            pieces = [piece.strip() for piece in re.split(r"\s+\|\s+|•|,", line) if piece.strip()]
+            if pieces:
+                return ", ".join(pieces[:3])
+    return ""
+
+
+def _first_match(pattern: str, text: str) -> str:
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    return match.group(0).strip() if match else ""
+
+
+def _first_website(text: str, linkedin: str) -> str:
+    candidates = re.findall(r"(?:https?://)?(?:www\.)?[A-Za-z0-9-]+\.[A-Za-z]{2,}(?:/[^\s|]*)?", text)
+    for candidate in candidates:
+        lowered = candidate.lower()
+        if "linkedin.com" in lowered or "@" in lowered or lowered.endswith("laurentian.ca"):
+            continue
+        if linkedin and candidate in linkedin:
+            continue
+        return candidate.strip().rstrip(".")
+    return ""
+
+
+def _clean(value: str | None) -> str:
+    return str(value or "").strip()

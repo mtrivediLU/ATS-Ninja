@@ -5,15 +5,19 @@ from typing import Any
 import streamlit as st
 
 from core.ats_scorer import calculate_ats_score, compare_scores, extract_keywords
-from core.cover_letter_generator import generate_cover_letter
-from core.latex_renderer import cover_letter_to_latex, resume_to_latex
-from core.llm import get_llm, test_ollama_connection
+from core.generation_pipeline import run_pipeline
 from core.pdf_extractor import extract_text_from_pdf
 from core.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf
-from core.resume_generator import generate_resume_keywords_analysis, generate_tailored_resume
+from core.resume_generator import generate_resume_keywords_analysis
 
 
-MODEL_OPTIONS = ["llama3.2", "qwen2.5:7b"]
+MODE_OPTIONS = [
+    "Resume and cover letter",
+    "Resume only",
+    "Cover letter only",
+    "Resume and application answers",
+    "Application answers only",
+]
 
 
 def initialize_state() -> None:
@@ -71,6 +75,8 @@ def build_user_info(
     location: str = "",
     linkedin: str = "",
     portfolio: str = "",
+    availability: str = "",
+    work_mode: str = "",
 ) -> dict[str, str]:
     """Build a normalized user info dictionary."""
     return {
@@ -81,20 +87,28 @@ def build_user_info(
         "location": location.strip(),
         "linkedin": linkedin.strip(),
         "portfolio": portfolio.strip(),
+        "website": portfolio.strip(),
+        "availability": availability.strip(),
+        "work_mode": work_mode.strip(),
     }
 
 
-def validate_inputs(uploaded_file: Any, job_description: str) -> bool:
+def validate_inputs(
+    uploaded_file: Any,
+    resume_text: str,
+    job_description: str,
+    questions_text: str,
+) -> bool:
     """Validate form inputs and report friendly Streamlit errors."""
-    if uploaded_file is None:
-        st.error("Please upload a PDF resume before generating materials.")
+    if uploaded_file is None and not resume_text.strip():
+        st.error("Please upload a PDF resume or paste resume text before generating materials.")
         return False
 
-    if not job_description or not job_description.strip():
-        st.error("Please paste a job description before generating materials.")
+    if not job_description.strip() and not questions_text.strip():
+        st.error("Please paste a job description or application questions before generating materials.")
         return False
 
-    if len(job_description.strip()) < 500:
+    if job_description.strip() and len(job_description.strip()) < 500:
         st.error("Please paste a job description with at least 500 characters.")
         return False
 
@@ -103,54 +117,47 @@ def validate_inputs(uploaded_file: Any, job_description: str) -> bool:
 
 def run_generation_pipeline(
     uploaded_file: Any,
+    resume_text: str,
     job_description: str,
-    model_name: str,
+    questions_text: str,
+    requested_mode: str,
     user_info: dict[str, str],
 ) -> dict[str, Any] | None:
     """Run extraction, scoring, LLM generation, rendering, and PDF creation."""
-    if not test_ollama_connection():
-        st.error(
-            "Ollama does not appear to be running. Start it locally, confirm the model is pulled, "
-            "then try again."
-        )
-        return None
-
-    base_resume_text = extract_text_from_pdf(uploaded_file)
+    base_resume_text = "\n\n".join(
+        part.strip()
+        for part in [resume_text, extract_text_from_pdf(uploaded_file) if uploaded_file else ""]
+        if part and part.strip()
+    )
     if not base_resume_text:
-        st.error("PDF extraction failed. Please try another text-based resume PDF.")
+        st.error("Resume extraction failed. Please try another text-based PDF or paste resume text.")
         return None
 
     before_score = calculate_ats_score(base_resume_text, job_description)
     job_keywords = extract_keywords(job_description)
 
     try:
-        resume_llm = get_llm(model_name=model_name, temperature=0.3)
-        cover_letter_llm = get_llm(model_name=model_name, temperature=0.7)
-        tailored_resume = generate_tailored_resume(
-            base_resume_text=base_resume_text,
+        pipeline_result = run_pipeline(
+            uploaded_resume_pdf=None,
+            resume_text=base_resume_text,
             job_description=job_description,
-            llm=resume_llm,
-            user_info=user_info,
-        )
-        cover_letter = generate_cover_letter(
-            tailored_resume=tailored_resume,
-            job_description=job_description,
-            llm=cover_letter_llm,
-            user_info=user_info,
+            overrides=user_info,
+            logistics=user_info,
+            questions_text=questions_text,
+            requested_mode=requested_mode,
         )
     except Exception as exc:
-        st.error(
-            "Ollama could not generate the materials. Confirm the selected model exists locally "
-            f"with `ollama list`, then try again. Details: {exc}"
-        )
+        st.error(f"The v5 generation pipeline could not complete. Details: {exc}")
         return None
 
+    if pipeline_result.validation_errors:
+        st.error("Quality gates blocked the output:\n\n" + "\n".join(pipeline_result.validation_errors[:8]))
+        return None
+
+    tailored_resume = pipeline_result.resume_text
+    cover_letter = pipeline_result.cover_letter_text
     if not tailored_resume:
-        st.error("The resume generator returned an empty result. Please try again.")
-        return None
-
-    if not cover_letter:
-        st.error("The cover letter generator returned an empty result. Please try again.")
+        st.error("The resume generator returned an empty result. Please try again with a job description.")
         return None
 
     after_score = calculate_ats_score(tailored_resume, job_description)
@@ -160,10 +167,10 @@ def run_generation_pipeline(
         tailored_resume=tailored_resume,
         job_keywords=job_keywords,
     )
-    resume_latex = resume_to_latex(tailored_resume, user_info)
-    cover_letter_latex = cover_letter_to_latex(cover_letter, user_info)
+    resume_latex = pipeline_result.resume_latex
+    cover_letter_latex = pipeline_result.cover_letter_latex
     resume_pdf = generate_resume_pdf(tailored_resume, user_info)
-    cover_letter_pdf = generate_cover_letter_pdf(cover_letter, user_info)
+    cover_letter_pdf = generate_cover_letter_pdf(cover_letter, user_info) if cover_letter else b""
 
     return {
         "base_resume_text": base_resume_text,
@@ -177,6 +184,9 @@ def run_generation_pipeline(
         "cover_letter_latex": cover_letter_latex,
         "resume_pdf": resume_pdf,
         "cover_letter_pdf": cover_letter_pdf,
+        "answers_text": pipeline_result.answers_text,
+        "mode_outputs": pipeline_result.mode_outputs,
+        "jd_profile": pipeline_result.jd_profile,
     }
 
 
@@ -202,20 +212,23 @@ def render_generated_outputs(generated: dict[str, Any]) -> None:
             use_container_width=True,
         )
     with row_one_right:
-        st.download_button(
-            "⬇ Download Cover Letter PDF",
-            data=generated["cover_letter_pdf"],
-            file_name="cover_letter.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        if generated.get("cover_letter_pdf"):
+            st.download_button(
+                "⬇ Download Cover Letter PDF",
+                data=generated["cover_letter_pdf"],
+                file_name="cover_letter.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        else:
+            st.button("⬇ Download Cover Letter PDF", disabled=True, use_container_width=True)
 
     row_two_left, row_two_right = st.columns(2)
     with row_two_left:
         if st.button("📋 Copy Resume LaTeX", use_container_width=True):
             st.session_state.show_resume_latex = True
     with row_two_right:
-        if st.button("📋 Copy Cover Letter LaTeX", use_container_width=True):
+        if st.button("📋 Copy Cover Letter LaTeX", use_container_width=True, disabled=not generated.get("cover_letter_latex")):
             st.session_state.show_cover_latex = True
 
     if st.session_state.show_resume_latex:
@@ -238,7 +251,11 @@ def render_generated_outputs(generated: dict[str, Any]) -> None:
         st.text(generated["tailored_resume"])
 
     with st.expander("Preview Cover Letter"):
-        st.text(generated["cover_letter"])
+        st.text(generated.get("cover_letter") or "No cover letter generated for this mode.")
+
+    if generated.get("answers_text"):
+        with st.expander("Application Answers", expanded=True):
+            st.text(generated["answers_text"])
 
     analysis = generated["keyword_analysis"]
     with st.expander("Match Analysis", expanded=True):
@@ -329,7 +346,9 @@ def main() -> None:
     with st.sidebar:
         st.header("Inputs")
         uploaded_file = st.file_uploader("Resume PDF", type=["pdf"])
+        resume_text = st.text_area("Resume Text", height=160)
         job_description = st.text_area("Job Description", height=260)
+        questions_text = st.text_area("Application Questions", height=140)
         name = st.text_input("Full Name")
         email = st.text_input("Email")
         phone = st.text_input("Phone")
@@ -337,17 +356,31 @@ def main() -> None:
         location = st.text_input("Location")
         linkedin = st.text_input("LinkedIn")
         portfolio = st.text_input("Portfolio / Website")
-        model_name = st.selectbox("LLM Model", MODEL_OPTIONS, index=0)
+        availability = st.text_input("Availability")
+        work_mode = st.text_input("Work Mode Preference")
+        requested_mode = st.selectbox("Output Mode", MODE_OPTIONS, index=0)
         generate = st.button("Generate Tailored Materials", type="primary", use_container_width=True)
 
     if generate:
-        user_info = build_user_info(name, email, phone, headline, location, linkedin, portfolio)
-        if validate_inputs(uploaded_file, job_description):
+        user_info = build_user_info(
+            name,
+            email,
+            phone,
+            headline,
+            location,
+            linkedin,
+            portfolio,
+            availability,
+            work_mode,
+        )
+        if validate_inputs(uploaded_file, resume_text, job_description, questions_text):
             with st.spinner("Analyzing resume and generating tailored materials..."):
                 generated = run_generation_pipeline(
                     uploaded_file=uploaded_file,
+                    resume_text=resume_text,
                     job_description=job_description.strip(),
-                    model_name=model_name,
+                    questions_text=questions_text,
+                    requested_mode=requested_mode.lower(),
                     user_info=user_info,
                 )
             if generated:

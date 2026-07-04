@@ -1,85 +1,116 @@
-# Resume Tailor AI
+# ATS-Ninja
 
-Resume Tailor AI is a local Streamlit application that turns a base resume PDF and a pasted job description into ATS-optimized application materials. It uses a local Ollama model to generate a tailored resume and cover letter, then provides before and after ATS keyword scores, downloadable PDFs, and copyable LaTeX.
+ATS-Ninja is a local Streamlit application for generating recruiter-ready resumes, cover letters, and application answers from Mihir Trivedi's v5 profile rules, an uploaded resume PDF or pasted resume text, and a job description.
 
-## Features
+The current pipeline is designed around truth control first. It resolves contact information, parses the job description, builds an evidence matrix, creates a document plan, generates Overleaf-ready LaTeX, and runs validators before anything is shown to the user.
 
-- Upload a PDF resume and extract its text locally.
-- Paste a job description and calculate a before-generation ATS match score.
-- Generate a truthful, tailored resume with a local Ollama LLM and a recruiter-grade technical resume format.
-- Generate a concise, role-specific cover letter based on the tailored resume.
-- View after-generation ATS score and score improvement.
-- Download the tailored resume and cover letter as PDFs.
-- Copy complete LaTeX source for both generated documents.
-- Review matched, missing, and AI-added keywords.
-- Use optional headline, location, LinkedIn, and portfolio fields for a polished candidate header.
+## What It Does
 
-## Prerequisites
+- Generates ATS-optimized resumes in Mihir's v5 technical resume format.
+- Generates one-page cover letters with the same resolved contact identity.
+- Generates paste-ready application and screening answers.
+- Accepts a resume PDF, pasted resume text, job description, optional application questions, and optional contact/logistics overrides.
+- Extracts contact details from uploaded resume text.
+- Resolves contacts with strict precedence: user override, uploaded resume, `01_profile_v5.md`, then blank.
+- Blocks retired Laurentian email addresses and defaults to `mihir1611t@gmail.com`.
+- Shows before and after ATS keyword scores in Streamlit.
+- Provides PDF downloads and copyable LaTeX output.
 
-- Python 3.11 or newer.
-- Git.
-- Ollama installed and running locally.
-- A local Ollama model pulled, for example:
+## Pipeline
+
+1. `core/input_parser.py` normalizes resume text, questions, overrides, logistics, mode, and contacts.
+2. `core/jd_parser.py` extracts job title, company, work mode, location, required and preferred qualifications, responsibilities, technical keywords, domain, and likely ATS platform.
+3. `core/evidence_engine.py` builds a keyword evidence matrix using the v5 gap ladder.
+4. `core/planning_engine.py` chooses role identity, summary, skills, bullets, metrics, working knowledge, residual gap, cover-letter angle, and probability.
+5. `core/generators/` renders resume LaTeX, cover-letter LaTeX, and application answers from structured plans.
+6. `core/validators/` checks truth claims, style, LaTeX structure, cover-letter length, and final output format.
+
+## Truth Tiers
+
+`01_profile_v5.md` is the source of truth.
+
+- Tier A facts can appear in summary, skills, and supported bullets.
+- Tier B facts can appear in summary and skills, and in bullets only with careful wording that reflects actual use.
+- Tier C facts can appear only in a clearly labeled `Working knowledge` skills line or a cover-letter fast-ramp paragraph.
+- Missing facts are never claimed. One residual gap may appear in the analysis snapshot.
+
+The v5 ladder is:
+
+`Tier A exact match > Tier B exact match > adjacency phrasing > Tier C Working knowledge > honest missing gap`
+
+## Validation Gates
+
+The pipeline runs silent gates before returning output:
+
+- Claim validation catches retired emails, Tier C in experience bullets, unsupported metrics, altered official titles, unsupported employers, and production claims for Tier B or Tier C tools.
+- Style validation blocks em dashes, en dashes, double hyphens, and banned resume filler language.
+- LaTeX validation catches missing `\end{document}`, unbalanced braces, malformed `\resumeSubheading` or `\resumeItem` calls, list mismatches, and code-fence issues.
+- Output validation enforces Mode R, Mode C, and Mode Q formatting.
+- Cover-letter validation keeps body length between 280 and 320 words.
+
+## Local Setup
+
+Use Python 3.11 or newer.
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Ollama dependencies remain installed for local model experimentation and compatibility with earlier modules:
 
 ```bash
 ollama pull llama3.2
 ```
 
-## Installation
+The v5 production pipeline itself is deterministic and validator-driven so it can enforce truth constraints before output.
 
-Clone the repository, then create and activate a virtual environment:
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-```
-
-Install the dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Optionally copy the environment example:
-
-```bash
-cp .env.example .env
-```
-
-## How To Run
-
-Start Ollama in the background if it is not already running, then launch Streamlit:
+## Run The App
 
 ```bash
 streamlit run app.py
 ```
 
-Open the local URL Streamlit prints in your terminal.
+Then open the local URL printed by Streamlit.
 
 ## Usage
 
-1. Upload a text-based PDF resume in the sidebar.
-2. Paste a job description with at least 500 characters.
-3. Enter your name, email, and phone number.
-4. Optionally add a professional headline, location, LinkedIn, and portfolio URL.
-5. Choose `llama3.2` or `qwen2.5:7b`.
-6. Click **Generate Tailored Materials**.
-7. Review the before and after ATS scores, download PDFs, or reveal the LaTeX code.
+1. Upload a resume PDF or paste resume text.
+2. Paste a job description.
+3. Optionally paste application questions.
+4. Optionally override name, email, phone, headline, location, LinkedIn, website, availability, or work mode.
+5. Choose an output mode.
+6. Generate materials.
+7. Download PDFs or reveal the LaTeX/code text areas.
 
-The generated resume uses a compact technical resume structure: centered header, targeted headline, categorized technical skills, structured employer/date rows, quantified bullets, education, and certifications.
+## Output Modes
 
-The app only uses local processing and the local Ollama API at `http://localhost:11434`.
+- Resume only
+- Cover letter only
+- Resume and cover letter
+- Resume and application answers
+- Application answers only
 
-## Tech Stack
+Mode detection helpers are also available in `core/generation_pipeline.py` for programmatic use.
 
-- Streamlit
-- LangChain
-- Ollama through `langchain-ollama`
-- pdfplumber
-- scikit-learn
-- Jinja2
-- WeasyPrint
-- ReportLab
+## Tests
+
+Run:
+
+```bash
+python -m compileall app.py core
+pytest
+```
+
+The test suite covers contact precedence, retired email rejection, tier placement, unsupported metrics, official titles, style gates, LaTeX structure, mode detection, cover-letter length, and output format validation.
+
+## Known Limitations
+
+- JD parsing is heuristic, not a full semantic parser.
+- The deterministic generator prioritizes truth control over free-form creativity.
+- PDF rendering uses WeasyPrint first and ReportLab fallback when native WeasyPrint libraries are unavailable.
+- The app does not submit applications or send email.
 
 ## License
 
