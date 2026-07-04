@@ -9,7 +9,8 @@ The current pipeline is designed around truth control first. It resolves contact
 - Generates ATS-optimized resumes in Mihir's v5 technical resume format.
 - Generates one-page cover letters with the same resolved contact identity.
 - Generates paste-ready application and screening answers.
-- Accepts a resume PDF, pasted resume text, job description, optional application questions, and optional contact/logistics overrides.
+- Accepts a resume PDF and job description in the Streamlit UI.
+- Keeps the `llama3.2` and `qwen2.5:7b` model selector in the UI for local model workflow compatibility.
 - Extracts contact details from uploaded resume text.
 - Resolves contacts with strict precedence: user override, uploaded resume, `01_profile_v5.md`, then blank.
 - Blocks retired Laurentian email addresses and defaults to `mihir1611t@gmail.com`.
@@ -76,23 +77,17 @@ Then open the local URL printed by Streamlit.
 
 ## Usage
 
-1. Upload a resume PDF or paste resume text.
+1. Upload a resume PDF.
 2. Paste a job description.
-3. Optionally paste application questions.
-4. Optionally override name, email, phone, headline, location, LinkedIn, website, availability, or work mode.
-5. Choose an output mode.
-6. Generate materials.
-7. Download PDFs or reveal the LaTeX/code text areas.
+3. Choose `llama3.2` or `qwen2.5:7b`.
+4. Generate materials.
+5. Download PDFs or reveal the LaTeX/code text areas.
 
 ## Output Modes
 
-- Resume only
-- Cover letter only
 - Resume and cover letter
-- Resume and application answers
-- Application answers only
 
-Mode detection helpers are also available in `core/generation_pipeline.py` for programmatic use.
+The underlying pipeline still supports resume-only, cover-letter-only, and application-answer modes programmatically through `core/generation_pipeline.py`.
 
 ## Tests
 

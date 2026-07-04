@@ -25,8 +25,9 @@ def validate_claims(text: str, profile: Profile) -> list[str]:
         if re.search(rf"(?<![\w+#.-]){re.escape(term)}(?![\w+#.-])", experience_text.lower()):
             errors.append(f"Tier C term in experience bullets: {profile.tier_c[term]}")
 
+    experience_lowered = experience_text.lower()
     for term in list(profile.tier_b) + list(profile.tier_c):
-        if term in lowered and _near_production_claim(lowered, term):
+        if term in experience_lowered and _near_production_claim(experience_lowered, term):
             errors.append(f"unsupported production ownership claim for {term}")
 
     for word in UNSUPPORTED_SCALE_WORDS:

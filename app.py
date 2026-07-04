@@ -11,13 +11,7 @@ from core.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf
 from core.resume_generator import generate_resume_keywords_analysis
 
 
-MODE_OPTIONS = [
-    "Resume and cover letter",
-    "Resume only",
-    "Cover letter only",
-    "Resume and application answers",
-    "Application answers only",
-]
+MODEL_OPTIONS = ["llama3.2", "qwen2.5:7b"]
 
 
 def initialize_state() -> None:
@@ -80,9 +74,9 @@ def build_user_info(
 ) -> dict[str, str]:
     """Build a normalized user info dictionary."""
     return {
-        "name": name.strip() or "Your Name",
-        "email": email.strip() or "your.email@example.com",
-        "phone": phone.strip() or "Your Phone",
+        "name": name.strip(),
+        "email": email.strip(),
+        "phone": phone.strip(),
         "headline": headline.strip(),
         "location": location.strip(),
         "linkedin": linkedin.strip(),
@@ -95,17 +89,15 @@ def build_user_info(
 
 def validate_inputs(
     uploaded_file: Any,
-    resume_text: str,
     job_description: str,
-    questions_text: str,
 ) -> bool:
     """Validate form inputs and report friendly Streamlit errors."""
-    if uploaded_file is None and not resume_text.strip():
-        st.error("Please upload a PDF resume or paste resume text before generating materials.")
+    if uploaded_file is None:
+        st.error("Please upload a PDF resume before generating materials.")
         return False
 
-    if not job_description.strip() and not questions_text.strip():
-        st.error("Please paste a job description or application questions before generating materials.")
+    if not job_description.strip():
+        st.error("Please paste a job description before generating materials.")
         return False
 
     if job_description.strip() and len(job_description.strip()) < 500:
@@ -117,20 +109,14 @@ def validate_inputs(
 
 def run_generation_pipeline(
     uploaded_file: Any,
-    resume_text: str,
     job_description: str,
-    questions_text: str,
-    requested_mode: str,
+    model_name: str,
     user_info: dict[str, str],
 ) -> dict[str, Any] | None:
     """Run extraction, scoring, LLM generation, rendering, and PDF creation."""
-    base_resume_text = "\n\n".join(
-        part.strip()
-        for part in [resume_text, extract_text_from_pdf(uploaded_file) if uploaded_file else ""]
-        if part and part.strip()
-    )
+    base_resume_text = extract_text_from_pdf(uploaded_file) if uploaded_file else ""
     if not base_resume_text:
-        st.error("Resume extraction failed. Please try another text-based PDF or paste resume text.")
+        st.error("Resume extraction failed. Please try another text-based PDF.")
         return None
 
     before_score = calculate_ats_score(base_resume_text, job_description)
@@ -143,8 +129,8 @@ def run_generation_pipeline(
             job_description=job_description,
             overrides=user_info,
             logistics=user_info,
-            questions_text=questions_text,
-            requested_mode=requested_mode,
+            questions_text="",
+            requested_mode="streamlit_default",
         )
     except Exception as exc:
         st.error(f"The v5 generation pipeline could not complete. Details: {exc}")
@@ -169,8 +155,19 @@ def run_generation_pipeline(
     )
     resume_latex = pipeline_result.resume_latex
     cover_letter_latex = pipeline_result.cover_letter_latex
-    resume_pdf = generate_resume_pdf(tailored_resume, user_info)
-    cover_letter_pdf = generate_cover_letter_pdf(cover_letter, user_info) if cover_letter else b""
+    resolved_contact = pipeline_result.parsed_input.contacts
+    resolved_user_info = {
+        "name": resolved_contact.name,
+        "email": resolved_contact.email,
+        "phone": resolved_contact.phone,
+        "headline": pipeline_result.resume_plan.headline if pipeline_result.resume_plan else "",
+        "location": resolved_contact.location,
+        "linkedin": resolved_contact.linkedin,
+        "portfolio": resolved_contact.website,
+        "website": resolved_contact.website,
+    }
+    resume_pdf = generate_resume_pdf(tailored_resume, resolved_user_info)
+    cover_letter_pdf = generate_cover_letter_pdf(cover_letter, resolved_user_info) if cover_letter else b""
 
     return {
         "base_resume_text": base_resume_text,
@@ -187,6 +184,7 @@ def run_generation_pipeline(
         "answers_text": pipeline_result.answers_text,
         "mode_outputs": pipeline_result.mode_outputs,
         "jd_profile": pipeline_result.jd_profile,
+        "model_name": model_name,
     }
 
 
@@ -346,41 +344,18 @@ def main() -> None:
     with st.sidebar:
         st.header("Inputs")
         uploaded_file = st.file_uploader("Resume PDF", type=["pdf"])
-        resume_text = st.text_area("Resume Text", height=160)
         job_description = st.text_area("Job Description", height=260)
-        questions_text = st.text_area("Application Questions", height=140)
-        name = st.text_input("Full Name")
-        email = st.text_input("Email")
-        phone = st.text_input("Phone")
-        headline = st.text_input("Professional Headline")
-        location = st.text_input("Location")
-        linkedin = st.text_input("LinkedIn")
-        portfolio = st.text_input("Portfolio / Website")
-        availability = st.text_input("Availability")
-        work_mode = st.text_input("Work Mode Preference")
-        requested_mode = st.selectbox("Output Mode", MODE_OPTIONS, index=0)
+        model_name = st.selectbox("LLM Model", MODEL_OPTIONS, index=0)
         generate = st.button("Generate Tailored Materials", type="primary", use_container_width=True)
 
     if generate:
-        user_info = build_user_info(
-            name,
-            email,
-            phone,
-            headline,
-            location,
-            linkedin,
-            portfolio,
-            availability,
-            work_mode,
-        )
-        if validate_inputs(uploaded_file, resume_text, job_description, questions_text):
+        user_info = build_user_info("", "", "")
+        if validate_inputs(uploaded_file, job_description):
             with st.spinner("Analyzing resume and generating tailored materials..."):
                 generated = run_generation_pipeline(
                     uploaded_file=uploaded_file,
-                    resume_text=resume_text,
                     job_description=job_description.strip(),
-                    questions_text=questions_text,
-                    requested_mode=requested_mode.lower(),
+                    model_name=model_name,
                     user_info=user_info,
                 )
             if generated:

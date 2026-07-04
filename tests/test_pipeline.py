@@ -77,6 +77,19 @@ def test_unsupported_metric_rejected() -> None:
     assert any("unsupported" in error for error in errors)
 
 
+def test_tier_b_skill_is_not_flagged_by_summary_production_word() -> None:
+    text = (
+        "Professional Summary\n"
+        "Software engineer with production software delivery experience.\n"
+        "Technical Skills\n"
+        "Data and BI: data visualization, Power BI\n"
+        "Professional Experience\n"
+        "- Built Python pipelines.\n"
+        "Education"
+    )
+    assert not any("data visualization" in error for error in validate_claims(text, PROFILE))
+
+
 def test_official_titles_are_not_altered() -> None:
     text = "\\resumeSubheading{Flosonics Medical}{Toronto}{AI Engineer}{Oct 2024 to Apr 2026}"
     assert any("official title altered" in error for error in validate_claims(text, PROFILE))
