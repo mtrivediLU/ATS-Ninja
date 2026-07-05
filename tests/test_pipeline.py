@@ -3,8 +3,7 @@ from __future__ import annotations
 from core.evidence_engine import classify_keyword
 from core.generation_pipeline import mode_from_text, run_pipeline
 from core.input_parser import extract_contacts, resolve_contacts
-from core.models import Mode
-from core.profile_loader import cached_profile
+from core.models import ContactInfo, Experience, Mode, Profile
 from core.validators.claim_validator import validate_claims
 from core.validators.latex_validator import validate_latex
 from core.validators.output_format_validator import (
@@ -14,45 +13,65 @@ from core.validators.output_format_validator import (
 from core.validators.style_validator import validate_style
 
 
-PROFILE = cached_profile()
+def _sample_profile() -> Profile:
+    """A synthetic, non-personal profile used only to exercise the generic
+    tiering/validation logic, independent of any real candidate's data."""
+    return Profile(
+        contact=ContactInfo(name="Jordan Rivera", email="jordan@example.com"),
+        retired_emails=["old@example.com"],
+        role_identities=["Software Engineer"],
+        tier_a={"python": "Python", "sql": "SQL", "azure": "Azure"},
+        tier_b={"power bi": "Power BI", "data visualization": "data visualization"},
+        tier_c={"fastapi": "FastAPI", "graphql": "GraphQL"},
+        adjacency={},
+        experiences=[
+            Experience(
+                company="Acme Corp",
+                title="Software Engineer",
+                location="Remote",
+                dates="2020 to 2023",
+                bullets=["Built Python pipelines.", "Reduced processing time by 40%."],
+            )
+        ],
+        education=[],
+        certifications=[],
+        supported_metrics=["40%", "5 hours to minutes"],
+    )
+
+
+PROFILE = _sample_profile()
 
 
 def test_contact_override_precedence() -> None:
-    extracted = extract_contacts("Mihir Trivedi\n249-360-5901\nold@example.com")
+    extracted = extract_contacts("Jordan Rivera\n249-360-5901\nold@example.com")
     contacts = resolve_contacts(
         overrides={"email": "new@example.com"},
         extracted=extracted,
-        profile=PROFILE,
     )
     assert contacts.email == "new@example.com"
     assert contacts.source["email"] == "override"
 
 
 def test_extracted_resume_contact_used_when_no_override_exists() -> None:
-    extracted = extract_contacts("Mihir Trivedi\n705-555-1111\nresume@example.com")
-    contacts = resolve_contacts(overrides={}, extracted=extracted, profile=PROFILE)
+    extracted = extract_contacts("Jordan Rivera\n705-555-1111\nresume@example.com")
+    contacts = resolve_contacts(overrides={}, extracted=extracted)
     assert contacts.email == "resume@example.com"
     assert contacts.phone == "705-555-1111"
 
 
-def test_profile_default_used_when_no_override_or_extracted_value_exists() -> None:
-    contacts = resolve_contacts(overrides={}, extracted=extract_contacts(""), profile=PROFILE)
-    assert contacts.email == "mihir1611t@gmail.com"
-    assert contacts.name == "Mihir Trivedi"
+def test_no_default_identity_when_nothing_provided() -> None:
+    contacts = resolve_contacts(overrides={}, extracted=extract_contacts(""))
+    assert contacts.email == ""
+    assert contacts.name == ""
 
 
-def test_laurentian_email_rejected() -> None:
+def test_retired_profile_email_is_rejected() -> None:
     contacts = resolve_contacts(
         overrides={},
-        extracted=extract_contacts("Mihir Trivedi\nmtrivedi@laurentian.ca"),
+        extracted=extract_contacts("Jordan Rivera\nold@example.com"),
         profile=PROFILE,
     )
-    assert contacts.email == "mihir1611t@gmail.com"
-
-
-def test_default_gmail_used() -> None:
-    contacts = resolve_contacts(overrides={}, extracted=extract_contacts(""), profile=PROFILE)
-    assert contacts.email == "mihir1611t@gmail.com"
+    assert contacts.email == ""
 
 
 def test_tier_c_cannot_appear_in_experience_bullets() -> None:
@@ -91,7 +110,7 @@ def test_tier_b_skill_is_not_flagged_by_summary_production_word() -> None:
 
 
 def test_official_titles_are_not_altered() -> None:
-    text = "\\resumeSubheading{Flosonics Medical}{Toronto}{AI Engineer}{Oct 2024 to Apr 2026}"
+    text = "\\resumeSubheading{Acme Corp}{Remote}{Product Manager}{2020 to 2023}"
     assert any("official title altered" in error for error in validate_claims(text, PROFILE))
 
 
@@ -109,9 +128,14 @@ def test_banned_words_are_caught() -> None:
 def test_cover_letter_word_count_is_280_to_320() -> None:
     jd = _sample_jd()
     result = run_pipeline(
-        resume_text="Mihir Trivedi\nmihir1611t@gmail.com\n249-360-5901",
+        resume_text=(
+            "Jordan Rivera\njordan@example.com\n249-360-5901\n\n"
+            "Experience\nAcme Corp Remote\nSoftware Engineer 2020 to 2023\n"
+            "- Built Python and SQL data pipelines.\n"
+        ),
         job_description=jd,
         requested_mode="resume and cover letter",
+        llm=False,
     )
     assert result.cover_letter_plan is not None
     assert 280 <= result.cover_letter_plan.word_count <= 320

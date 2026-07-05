@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from core.adjacency_map import find_category
 from core.models import EvidenceItem, JDProfile, Profile
 
 
@@ -121,9 +122,18 @@ def _tier_lookup(normalized_keyword: str, profile: Profile) -> tuple[str, str]:
 
 
 def _adjacency_lookup(normalized_keyword: str, profile: Profile) -> str:
-    for term, evidence in profile.adjacency.items():
-        if _term_matches(term, normalized_keyword):
-            return evidence
+    """Find an honest adjacency phrasing: same tool category, real tool the
+    candidate's own resume actually shows evidence for (Tier A or B)."""
+    match = find_category(normalized_keyword)
+    if not match:
+        return ""
+    _category, label, tools = match
+    candidate_evidence = {**profile.tier_a, **profile.tier_b}
+    for tool in tools:
+        if tool == normalized_keyword:
+            continue
+        if tool in candidate_evidence:
+            return f"{label} ({candidate_evidence[tool]})"
     return ""
 
 

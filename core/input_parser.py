@@ -6,11 +6,6 @@ from typing import Any
 
 from core.models import ContactInfo, Mode, ParsedInput, Profile
 from core.pdf_extractor import extract_text_from_pdf
-from core.profile_loader import cached_profile
-
-
-BANNED_EMAIL_DOMAINS = {"laurentian.ca"}
-ACTIVE_DEFAULT_EMAIL = "mihir1611t@gmail.com"
 
 
 def parse_input(
@@ -24,8 +19,13 @@ def parse_input(
     requested_mode: str = "",
     profile: Profile | None = None,
 ) -> ParsedInput:
-    """Parse all user-provided inputs into a normalized pipeline input."""
-    profile = profile or cached_profile()
+    """Parse all user-provided inputs into a normalized pipeline input.
+
+    Contact fields resolve with strict precedence: explicit user override,
+    then whatever was extracted from the uploaded resume, then logistics
+    overrides (availability, work mode, etc). There is no hardcoded default
+    identity; a field is left blank if it truly is not present anywhere.
+    """
     extracted_pdf_text = extract_text_from_pdf(uploaded_resume_pdf) if uploaded_resume_pdf else ""
     combined_resume_text = "\n\n".join(
         part.strip() for part in [resume_text, extracted_pdf_text] if part and part.strip()
@@ -77,19 +77,23 @@ def resolve_contacts(
     *,
     overrides: dict[str, str],
     extracted: ContactInfo,
-    profile: Profile,
+    profile: Profile | None = None,
     logistics: dict[str, str] | None = None,
 ) -> ContactInfo:
-    """Resolve contacts using override, extracted, profile, then blank precedence."""
+    """Resolve contacts using override, then uploaded resume, then logistics precedence.
+
+    There is no hardcoded default identity. A field stays blank if the user
+    did not provide it and it was not found in the uploaded resume.
+    """
     logistics = logistics or {}
     resolved = ContactInfo()
     source: dict[str, str] = {}
     valid_fields = {field.name for field in fields(ContactInfo)} - {"source"}
+    retired_emails = {email.lower() for email in (profile.retired_emails if profile else [])}
 
     for key in valid_fields:
         override_value = _clean(overrides.get(key, ""))
         extracted_value = _clean(getattr(extracted, key, ""))
-        profile_value = _clean(getattr(profile.contact, key, ""))
         logistics_value = _clean(logistics.get(key, ""))
 
         value = ""
@@ -98,24 +102,18 @@ def resolve_contacts(
             (override_value, "override"),
             (extracted_value, "uploaded_resume"),
             (logistics_value, "override"),
-            (profile_value, "profile"),
         ]:
             if candidate:
                 value = candidate
                 chosen_source = candidate_source
                 break
 
-        if key == "email":
-            value, chosen_source = _resolve_email(
-                override_value=override_value,
-                extracted_value=extracted_value,
-                profile_value=profile_value,
-                profile=profile,
-            )
+        if key == "email" and value.lower() in retired_emails:
+            value, chosen_source = "", ""
 
         setattr(resolved, key, value)
         if value:
-            source[key] = chosen_source or "profile"
+            source[key] = chosen_source
 
     resolved.source = source
     return resolved
@@ -159,31 +157,6 @@ def split_questions(text: str) -> list[str]:
     return questions
 
 
-def _resolve_email(
-    *,
-    override_value: str,
-    extracted_value: str,
-    profile_value: str,
-    profile: Profile,
-) -> tuple[str, str]:
-    for value, source in [
-        (override_value, "override"),
-        (extracted_value, "uploaded_resume"),
-        (profile_value, "profile"),
-        (ACTIVE_DEFAULT_EMAIL, "profile"),
-    ]:
-        if value and not _is_banned_email(value, profile):
-            return value, source
-    return "", ""
-
-
-def _is_banned_email(email: str, profile: Profile) -> bool:
-    normalized = email.lower().strip()
-    domain = normalized.split("@")[-1] if "@" in normalized else ""
-    retired = {item.lower() for item in profile.retired_emails}
-    return normalized in retired or domain in BANNED_EMAIL_DOMAINS
-
-
 def _extract_name(lines: list[str]) -> str:
     for line in lines[:5]:
         if "@" in line or "linkedin" in line.lower() or any(char.isdigit() for char in line):
@@ -194,10 +167,16 @@ def _extract_name(lines: list[str]) -> str:
     return ""
 
 
+_LOCATION_HINTS = re.compile(
+    r"\b(remote|hybrid|on-site|onsite)\b"
+    r"|\b[A-Z][A-Za-z.'\s]+,\s*[A-Z]{2}\b"
+    r"|\b[A-Z][A-Za-z.'\s]+,\s*[A-Z][a-z]+\b",
+)
+
+
 def _extract_location(lines: list[str]) -> str:
     for line in lines[:12]:
-        lowered = line.lower()
-        if any(token in lowered for token in ["ontario", "canada", "toronto", "sudbury", "remote"]):
+        if _LOCATION_HINTS.search(line):
             pieces = [piece.strip() for piece in re.split(r"\s+\|\s+|•|,", line) if piece.strip()]
             if pieces:
                 return ", ".join(pieces[:3])
@@ -213,7 +192,7 @@ def _first_website(text: str, linkedin: str) -> str:
     candidates = re.findall(r"(?:https?://)?(?:www\.)?[A-Za-z0-9-]+\.[A-Za-z]{2,}(?:/[^\s|]*)?", text)
     for candidate in candidates:
         lowered = candidate.lower()
-        if "linkedin.com" in lowered or "@" in lowered or lowered.endswith("laurentian.ca"):
+        if "linkedin.com" in lowered or "@" in lowered:
             continue
         if linkedin and candidate in linkedin:
             continue

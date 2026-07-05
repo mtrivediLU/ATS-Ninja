@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
+import time
 from typing import Any
 
 import streamlit as st
 
 from core.ats_scorer import calculate_ats_score, compare_scores, extract_keywords
 from core.generation_pipeline import run_pipeline
+from core.llm import test_ollama_connection
 from core.pdf_extractor import extract_text_from_pdf
 from core.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf
 from core.resume_generator import generate_resume_keywords_analysis
@@ -123,6 +126,7 @@ def run_generation_pipeline(
     job_keywords = extract_keywords(job_description)
 
     try:
+        start_time = time.perf_counter()
         pipeline_result = run_pipeline(
             uploaded_resume_pdf=None,
             resume_text=base_resume_text,
@@ -131,7 +135,9 @@ def run_generation_pipeline(
             logistics=user_info,
             questions_text="",
             requested_mode="streamlit_default",
+            model_name=model_name,
         )
+        elapsed_seconds = time.perf_counter() - start_time
     except Exception as exc:
         st.error(f"The v5 generation pipeline could not complete. Details: {exc}")
         return None
@@ -185,6 +191,8 @@ def run_generation_pipeline(
         "mode_outputs": pipeline_result.mode_outputs,
         "jd_profile": pipeline_result.jd_profile,
         "model_name": model_name,
+        "llm_used": bool(pipeline_result.metadata.get("llm_available")),
+        "elapsed_seconds": elapsed_seconds,
     }
 
 
@@ -193,6 +201,16 @@ def render_generated_outputs(generated: dict[str, Any]) -> None:
     before = generated["before_score"]
     after = generated["after_score"]
     comparison = generated["comparison"]
+
+    elapsed = generated.get("elapsed_seconds")
+    timing_suffix = f" ({elapsed:.1f}s)" if elapsed is not None else ""
+    if generated.get("llm_used"):
+        st.success(f"Generated with local model `{generated['model_name']}` for higher-quality tailoring.{timing_suffix}")
+    else:
+        st.warning(
+            "Ollama was not reachable, so this was generated with the deterministic fallback only. "
+            "Start Ollama (`ollama serve`) and pull the selected model, then regenerate for stronger writing."
+        )
 
     left, right = st.columns(2)
     with left:
@@ -346,9 +364,20 @@ def main() -> None:
         uploaded_file = st.file_uploader("Resume PDF", type=["pdf"])
         job_description = st.text_area("Job Description", height=260)
         model_name = st.selectbox("LLM Model", MODEL_OPTIONS, index=0)
+        if test_ollama_connection():
+            st.caption("🟢 Ollama is reachable.")
+        else:
+            st.caption("🔴 Ollama is not reachable. Generation will use the deterministic fallback only.")
+        force_fresh = st.checkbox(
+            "Force fresh generation (ignore cache)",
+            value=False,
+            help="Identical resume + JD + model combinations are cached for instant re-generation. "
+            "Check this to bypass the cache and get new model output.",
+        )
         generate = st.button("Generate Tailored Materials", type="primary", use_container_width=True)
 
     if generate:
+        os.environ["ATS_NINJA_LLM_CACHE"] = "0" if force_fresh else "1"
         user_info = build_user_info("", "", "")
         if validate_inputs(uploaded_file, job_description):
             with st.spinner("Analyzing resume and generating tailored materials..."):

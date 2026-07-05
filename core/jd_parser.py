@@ -2,9 +2,57 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from typing import Any
 
+from core.line_refs import number_lines, render_numbered_lines, resolve_line_numbers
+from core.llm import invoke_json
 from core.models import JDProfile, Profile
-from core.profile_loader import cached_profile
+from core.profile_loader import empty_profile
+
+
+# The JD has already been split into numbered lines. Pointing at line
+# numbers for the long list fields (instead of retyping each requirement
+# sentence) avoids burning decode time re-generating text the model just
+# read, and guarantees the resolved text is an exact source excerpt.
+JD_EXTRACTION_PROMPT = """You are an expert technical recruiter. The job description below has been split into numbered lines. Extract structured fields using ONLY what is written in it.
+
+For required_qualification_lines, preferred_qualification_lines, and responsibility_lines: do NOT retype the sentences. Return the LIST OF LINE NUMBERS (integers) that state each one, in order. This is mandatory.
+
+Return ONLY a single JSON object with exactly this shape, no markdown fences, no commentary:
+{{
+  "title": "",
+  "company": "",
+  "location": "",
+  "work_mode": "remote or hybrid or on-site or unknown",
+  "required_qualification_lines": [5, 6, 7],
+  "preferred_qualification_lines": [10],
+  "responsibility_lines": [2, 3],
+  "technical_keywords": ["..."],
+  "domain": "",
+  "ats_platform": "workday or greenhouse or lever or ashby or icims or bamboohr or unknown"
+}}
+
+Rules:
+- required_qualification_lines: line numbers explicitly stated as required or must-have.
+- preferred_qualification_lines: line numbers explicitly stated as preferred, nice to have, or bonus.
+- responsibility_lines: line numbers describing what the role will actually do day to day.
+- technical_keywords: every specific tool, language, platform, framework, or methodology named anywhere in the posting, deduped, most important first, written as short tokens (not full lines).
+- domain: one or two words for the industry (e.g. "healthcare", "mining", "e-commerce"), or "" if unclear.
+- Use [] for a line-number field with nothing to report. Do not invent line numbers that are not shown below.
+
+Numbered job description lines:
+---
+{numbered_lines}
+---
+
+JSON:
+"""
+
+_LINE_LIST_FIELDS = {
+    "required_qualification_lines": "required_qualifications",
+    "preferred_qualification_lines": "preferred_qualifications",
+    "responsibility_lines": "responsibilities",
+}
 
 
 COMMON_TECH_TERMS = [
@@ -52,9 +100,44 @@ COMMON_TECH_TERMS = [
 ]
 
 
-def parse_jd(job_description: str, profile: Profile | None = None) -> JDProfile:
-    """Parse a job description into structured planning fields."""
-    profile = profile or cached_profile()
+def parse_jd(job_description: str, profile: Profile | None = None, llm: Any | None = None) -> JDProfile:
+    """Parse a job description into structured planning fields.
+
+    Runs the deterministic heuristic parser first (always available), then,
+    if an LLM is provided, layers an LLM extraction on top and prefers its
+    fields whenever they are non-empty. This keeps the pipeline fully
+    functional with no LLM while giving materially better extraction when
+    one is available.
+    """
+    profile = profile or empty_profile()
+    heuristic = _parse_jd_heuristic(job_description, profile)
+    if llm is None:
+        return heuristic
+
+    lines = number_lines(job_description or "")
+    prompt = JD_EXTRACTION_PROMPT.format(numbered_lines=render_numbered_lines(lines)[:8000])
+    llm_data = invoke_json(llm, prompt)
+    if not isinstance(llm_data, dict):
+        return heuristic
+
+    llm_data = _resolve_line_list_fields(llm_data, lines)
+    return _merge_jd_profile(heuristic, llm_data)
+
+
+def _resolve_line_list_fields(data: dict[str, Any], lines: list[str]) -> dict[str, Any]:
+    """Turn each `*_lines` line-number field into resolved text under its plain field name.
+
+    If a model ignores the instruction and returns the plain text field
+    directly anyway, that is accepted as-is rather than discarded.
+    """
+    for line_field, text_field in _LINE_LIST_FIELDS.items():
+        if data.get(text_field):
+            continue
+        data[text_field] = resolve_line_numbers(data.pop(line_field, None), lines)
+    return data
+
+
+def _parse_jd_heuristic(job_description: str, profile: Profile) -> JDProfile:
     text = job_description or ""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     title = _extract_title(text, lines)
@@ -84,6 +167,43 @@ def parse_jd(job_description: str, profile: Profile | None = None) -> JDProfile:
         technical_keywords=keywords[:18],
         domain=domain,
         ats_platform=ats,
+    )
+
+
+def _merge_jd_profile(heuristic: JDProfile, llm_data: dict[str, Any]) -> JDProfile:
+    def text_field(key: str, fallback: str) -> str:
+        value = str(llm_data.get(key, "") or "").strip()
+        return value or fallback
+
+    def list_field(key: str, fallback: list[str]) -> list[str]:
+        value = llm_data.get(key)
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                return cleaned[:18]
+        return fallback
+
+    work_mode = text_field("work_mode", heuristic.work_mode).lower()
+    if work_mode not in {"remote", "hybrid", "on-site", "onsite", "relocation", "unknown"}:
+        work_mode = heuristic.work_mode
+    if work_mode == "onsite":
+        work_mode = "on-site"
+
+    ats_platform = text_field("ats_platform", heuristic.ats_platform).lower()
+    if ats_platform not in {"workday", "greenhouse", "lever", "ashby", "icims", "bamboohr", "unknown"}:
+        ats_platform = heuristic.ats_platform
+
+    return JDProfile(
+        title=text_field("title", heuristic.title),
+        company=text_field("company", heuristic.company),
+        work_mode=work_mode,
+        location=text_field("location", heuristic.location),
+        required_qualifications=list_field("required_qualifications", heuristic.required_qualifications)[:8],
+        preferred_qualifications=list_field("preferred_qualifications", heuristic.preferred_qualifications)[:8],
+        responsibilities=list_field("responsibilities", heuristic.responsibilities)[:5],
+        technical_keywords=list_field("technical_keywords", heuristic.technical_keywords)[:18],
+        domain=text_field("domain", heuristic.domain),
+        ats_platform=ats_platform,
     )
 
 
