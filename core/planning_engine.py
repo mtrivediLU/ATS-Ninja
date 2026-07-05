@@ -59,7 +59,7 @@ def build_resume_plan(
     residual_gap = _first_gap(evidence)
     probability = interview_probability(evidence)
     analysis = _analysis_lines(evidence, residual_gap, jd_profile)
-    headline = _headline(jd_profile, role_identity)
+    headline = _headline(jd_profile, role_identity, evidence)
     work_mode_line = _work_mode_line(jd_profile)
 
     return ResumePlan(
@@ -185,9 +185,15 @@ def choose_role_identity(jd_profile: JDProfile, profile: Profile) -> str:
     return "Professional"
 
 
-def _headline(jd_profile: JDProfile, role_identity: str) -> str:
+def _headline(jd_profile: JDProfile, role_identity: str, evidence: list[EvidenceItem]) -> str:
     title = jd_profile.title if jd_profile.title != "Target Role" else role_identity
-    keywords = [keyword for keyword in jd_profile.technical_keywords if len(keyword) > 2][:3]
+    keywords = _dedupe(
+        [
+            item.real_evidence if item.evidence_tier == "adjacency" and item.real_evidence else item.keyword
+            for item in evidence
+            if item.evidence_tier in {"A", "B", "adjacency"} and len(item.keyword) > 2
+        ]
+    )[:3]
     suffix = ", ".join(keywords)
     return f"{title} | {suffix}" if suffix else title
 
@@ -202,7 +208,7 @@ def _work_mode_line(jd_profile: JDProfile) -> str:
 
 def _top_keywords(evidence: list[EvidenceItem]) -> list[str]:
     useful = [
-        item.keyword
+        item.real_evidence if item.evidence_tier == "adjacency" and item.real_evidence else item.keyword
         for item in evidence
         if item.evidence_tier in {"A", "B", "adjacency"} and item.required_or_preferred == "required"
     ]
@@ -316,13 +322,21 @@ def _build_skill_groups(
     all_tier_a = list(profile.tier_a.values())
     all_tier_b = list(profile.tier_b.values())
 
+    core = _dedupe(relevant + all_tier_a)
+    additional = [skill for skill in _dedupe(all_tier_b) if skill.lower() not in {item.lower() for item in core}]
+    working = [
+        skill
+        for skill in _dedupe(list(profile.tier_c.values()) + working_knowledge)
+        if skill.lower() not in {item.lower() for item in core + additional}
+    ]
+
     groups: list[tuple[str, list[str]]] = []
-    if all_tier_a or relevant:
-        groups.append(("Core Skills", _dedupe(relevant + all_tier_a)[:9]))
-    if all_tier_b:
-        groups.append(("Additional Skills", _dedupe(all_tier_b)[:9]))
-    if working_knowledge:
-        groups.append(("Working knowledge", _dedupe(working_knowledge)[:4]))
+    if core:
+        groups.append(("Core Skills", core))
+    if additional:
+        groups.append(("Additional Skills", additional))
+    if working:
+        groups.append(("Working Knowledge", working))
     return groups
 
 
@@ -333,12 +347,9 @@ def _select_experience(
     llm: Any | None,
 ) -> list[Experience]:
     keywords = [item.keyword.lower() for item in evidence if item.evidence_tier != "missing"]
-    used_metrics: set[str] = set()
     entries: list[tuple[Experience, list[str]]] = []
 
     for experience in profile.experiences:
-        if len(entries) >= 6:
-            break
         scored_bullets = sorted(
             experience.bullets,
             key=lambda bullet: _bullet_score(bullet, keywords),
@@ -346,12 +357,7 @@ def _select_experience(
         )
         chosen: list[str] = []
         for bullet in scored_bullets:
-            if _metric_reused(bullet, used_metrics, profile.supported_metrics):
-                continue
-            _remember_metrics(bullet, used_metrics, profile.supported_metrics)
             chosen.append(soften_banned_style(bullet))
-            if len(chosen) >= 5:
-                break
         if chosen:
             entries.append((experience, chosen))
 
@@ -630,11 +636,11 @@ def _fallback_cover_letter_body(
             f"I bring hands-on delivery experience with a practical record of turning operational needs into reliable tools."
         ),
         (
-            f"My closest proof point is this: {first_proof} I also {second_proof[0].lower() + second_proof[1:]} "
+            f"My closest proof point is this: {_ensure_sentence(first_proof)} Another relevant proof point is this: {_ensure_sentence(second_proof)} "
             "That combination matters for this role because it shows I can work across systems, stakeholders, and delivery constraints without stretching beyond the facts."
         ),
         (
-            f"Earlier, {third_proof[0].lower() + third_proof[1:]} These experiences give me a useful base for the responsibilities in the posting.{ramp}"
+            f"Earlier work adds another signal: {_ensure_sentence(third_proof)} These experiences give me a useful base for the responsibilities in the posting.{ramp}"
         ),
         (
             f"{_sentence_case(_logistics_sentence(contact, work_mode_text))}. "
@@ -646,6 +652,13 @@ def _fallback_cover_letter_body(
 
 def _sentence_case(text: str) -> str:
     return f"{text[0].upper()}{text[1:]}" if text else text
+
+
+def _ensure_sentence(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    return cleaned if cleaned.endswith((".", "!", "?")) else f"{cleaned}."
 
 
 _FILLER_SENTENCES = [

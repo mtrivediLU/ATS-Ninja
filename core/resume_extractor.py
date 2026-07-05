@@ -61,6 +61,7 @@ def extract_profile(resume_text: str, llm: Any | None = None) -> Profile:
     if not text:
         return _empty_profile()
 
+    heuristic_data = _heuristic_extract(text)
     data = None
     if llm is not None:
         lines = number_lines(text)
@@ -69,8 +70,8 @@ def extract_profile(resume_text: str, llm: Any | None = None) -> Profile:
         if isinstance(data, dict):
             data = _resolve_bullet_lines(data, lines)
 
-    if not _looks_usable(data):
-        data = _heuristic_extract(text)
+    if not _looks_usable(data) or _is_materially_less_complete(data, heuristic_data):
+        data = heuristic_data
 
     return _build_profile(data, text)
 
@@ -109,6 +110,34 @@ def _empty_profile() -> Profile:
 
 def _looks_usable(data: Any) -> bool:
     return isinstance(data, dict) and (data.get("experiences") or data.get("skills_listed"))
+
+
+def _is_materially_less_complete(candidate: Any, baseline: dict[str, Any]) -> bool:
+    """Reject LLM parses that drop sections the deterministic parser found.
+
+    A local model can occasionally return a syntactically valid but nearly
+    empty JSON object. The old gate accepted that if it contained one skill,
+    allowing the rest of the pipeline to ship a gutted resume. The heuristic
+    parse is conservative, so treat it as a completeness floor.
+    """
+    if not isinstance(candidate, dict):
+        return True
+
+    for key in ("experiences", "education", "certifications"):
+        if len(candidate.get(key) or []) < len(baseline.get(key) or []):
+            return True
+
+    candidate_bullets = sum(len(entry.get("bullets") or []) for entry in candidate.get("experiences") or [] if isinstance(entry, dict))
+    baseline_bullets = sum(len(entry.get("bullets") or []) for entry in baseline.get("experiences") or [] if isinstance(entry, dict))
+    if candidate_bullets < baseline_bullets:
+        return True
+
+    candidate_skills = {str(skill).lower().strip() for skill in candidate.get("skills_listed") or [] if str(skill).strip()}
+    baseline_skills = {str(skill).lower().strip() for skill in baseline.get("skills_listed") or [] if str(skill).strip()}
+    if len(candidate_skills) < max(1, int(len(baseline_skills) * 0.8)):
+        return True
+
+    return False
 
 
 def _build_profile(data: dict[str, Any], source_text: str) -> Profile:

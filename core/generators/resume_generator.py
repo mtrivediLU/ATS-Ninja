@@ -11,34 +11,45 @@ def generate_resume_text(plan: ResumePlan) -> str:
     lines: list[str] = [
         "Candidate Header",
         f"Professional Headline: {plan.headline}",
-        f"Location: {contact.location}",
-        f"LinkedIn: {contact.linkedin}",
-        f"Portfolio: {contact.website}",
-        f"Work Authorization: {contact.work_authorization}",
-        f"Relocation: {contact.relocation}",
-        "",
-        "Professional Summary",
-        plan.summary,
-        "",
-        "Technical Skills",
     ]
+    for label, value in [
+        ("Location", contact.location),
+        ("LinkedIn", contact.linkedin),
+        ("Portfolio", contact.website),
+        ("Work Authorization", contact.work_authorization),
+        ("Relocation", contact.relocation),
+    ]:
+        if value:
+            lines.append(f"{label}: {value}")
+
+    lines.extend(["", "Professional Summary", plan.summary, "", "Technical Skills"])
     for category, items in plan.skill_groups:
         lines.append(f"{category}: {', '.join(items)}")
 
     lines.extend(["", "Professional Experience"])
     for entry in plan.experience:
-        lines.append(
-            f"Company: {entry.company} | Location: {entry.location} | Title: {entry.title} | Dates: {entry.dates}"
-        )
+        lines.append(_field_line(
+            [
+                ("Company", entry.company),
+                ("Location", entry.location),
+                ("Title", entry.title),
+                ("Dates", entry.dates),
+            ]
+        ))
         for bullet in entry.bullets:
             lines.append(f"- {bullet}")
         lines.append("")
 
     lines.append("Education")
     for entry in plan.education:
-        lines.append(
-            f"Institution: {entry.institution} | Location: {entry.location} | Degree: {entry.degree} | Dates: {entry.dates}"
-        )
+        lines.append(_field_line(
+            [
+                ("Institution", entry.institution),
+                ("Location", entry.location),
+                ("Degree", entry.degree),
+                ("Dates", entry.dates),
+            ]
+        ))
         for bullet in entry.bullets:
             lines.append(f"- {bullet}")
     lines.extend(["", "Certifications"])
@@ -89,3 +100,7 @@ def _user_info(plan: ResumePlan) -> dict[str, str]:
 
 def _strip_banned_dashes(text: str) -> str:
     return text.replace("—", ",").replace("–", " to ").replace("--", "-")
+
+
+def _field_line(fields: list[tuple[str, str]]) -> str:
+    return " | ".join(f"{label}: {value}" for label, value in fields if value)

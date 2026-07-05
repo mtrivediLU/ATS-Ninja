@@ -97,6 +97,23 @@ COMMON_TECH_TERMS = [
     "spark",
     "airflow",
     "scikit-learn",
+    "business intelligence",
+    "data visualization",
+    "data warehousing",
+    "data warehouse",
+    "data modeling",
+    "data modelling",
+    "data integration",
+    "data quality",
+    "semantic models",
+    "dataflow",
+    "dashboards",
+    "dashboard",
+    "amazon quicksight",
+    "quicksight",
+    "d3.js",
+    "dax",
+    "redshift",
 ]
 
 
@@ -142,9 +159,9 @@ def _parse_jd_heuristic(job_description: str, profile: Profile) -> JDProfile:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     title = _extract_title(text, lines)
     company = _extract_company(text, lines)
-    required = _extract_section_items(lines, ["required", "requirements", "qualifications", "must have"])
+    required = _extract_section_items(lines, ["required", "requirements", "qualifications", "must have", "what we are looking for"])
     preferred = _extract_section_items(lines, ["preferred", "nice to have", "bonus"])
-    responsibilities = _extract_section_items(lines, ["responsibilities", "what you will do", "duties", "role"])
+    responsibilities = _extract_section_items(lines, ["responsibilities", "what you will do", "duties", "role", "your day to day", "day to day"])
     keywords = _extract_keywords(text, profile)
     work_mode = _extract_work_mode(text)
     location = _extract_location(text, lines)
@@ -238,6 +255,19 @@ def _extract_company(text: str, lines: list[str]) -> str:
     for line in lines[:6]:
         if line.lower().startswith("about "):
             return _trim_company(line[6:])
+    for line in lines[1:8]:
+        cleaned = line.strip()
+        lowered = cleaned.lower()
+        if not cleaned or len(cleaned) > 80:
+            continue
+        if lowered.startswith(("job ", "location", "$")) or "out of 5" in lowered:
+            continue
+        if re.fullmatch(r"\d+(?:\.\d+)?", cleaned):
+            continue
+        if any(word in lowered for word in ["engineer", "developer", "analyst", "scientist", "architect"]):
+            continue
+        if re.search(r"[A-Za-z]", cleaned):
+            return _trim_company(cleaned)
     return ""
 
 
@@ -276,11 +306,41 @@ def _extract_keywords(text: str, profile: Profile) -> list[str]:
     tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9+#.-]{2,}\b", lowered)
     counts = Counter(tokens)
     for token, count in counts.most_common(20):
-        if count > 1 and token not in {"the", "and", "for", "with", "you", "our"}:
+        if count > 1 and token not in _GENERIC_KEYWORD_TOKENS:
             display = _display_keyword(token, profile)
             if display not in found:
                 found.append(display)
     return found
+
+
+_GENERIC_KEYWORD_TOKENS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "you",
+    "our",
+    "are",
+    "that",
+    "this",
+    "will",
+    "job",
+    "role",
+    "tools",
+    "business",
+    "data",
+    "rbh",
+    "work",
+    "team",
+    "teams",
+    "needs",
+    "using",
+    "including",
+    "experience",
+    "knowledge",
+    "techniques",
+    "processes",
+}
 
 
 def _display_keyword(term: str, profile: Profile) -> str:

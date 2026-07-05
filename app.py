@@ -118,6 +118,7 @@ def _is_fatal_validation_error(error: str) -> bool:
     wording, word counts) is surfaced as a warning with the output.
     """
     fatal_markers = (
+        "completeness:",
         "invented or unsupported employer",
         "unsupported metric",
         "email not present in resume",

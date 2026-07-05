@@ -54,6 +54,11 @@ BANNED_WORDS = [
     "I would welcome the opportunity",
     "make a meaningful impact",
     "unique blend of",
+    "drive data-driven decision making",
+    "data-driven decision making",
+    "fast-paced environment",
+    "tailored solutions",
+    "dedicated professional",
 ]
 
 

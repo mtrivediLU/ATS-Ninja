@@ -69,14 +69,51 @@ def _merge_wrapped_lines(text: str) -> str:
             merged.append("")
             continue
         previous = merged[-1] if merged else ""
-        is_continuation = (
-            previous
-            and not previous.endswith((":", ";", "|"))
-            and line[0].islower()
-            and not re.match(r"^[\-*•]", line)
-        )
-        if is_continuation:
+        if _is_wrapped_continuation(previous, line):
             merged[-1] = f"{previous} {line}"
         else:
             merged.append(line)
     return "\n".join(merged)
+
+
+def _is_wrapped_continuation(previous: str, line: str) -> bool:
+    if not previous or not line:
+        return False
+    if previous.endswith((".", "!", "?", ":", ";", "|")):
+        return False
+    if re.match(r"^[\-*•]", line):
+        return False
+    if _looks_like_section_heading(line) or _looks_like_dated_heading(line):
+        return False
+
+    previous_is_bullet = bool(re.match(r"^\s*[\-*•]", previous))
+    if previous_is_bullet:
+        return True
+
+    return line[0].islower() or line[0].isdigit() or previous.endswith((",", "(", "/", "&"))
+
+
+def _looks_like_section_heading(line: str) -> bool:
+    normalized = re.sub(r"\s+", " ", line.strip()).upper()
+    return normalized in {
+        "PROFESSIONAL SUMMARY",
+        "SUMMARY",
+        "TECHNICAL SKILLS",
+        "SKILLS",
+        "PROFESSIONAL EXPERIENCE",
+        "EXPERIENCE",
+        "EDUCATION",
+        "CERTIFICATIONS",
+        "LICENSES",
+    }
+
+
+def _looks_like_dated_heading(line: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4}\s*(?:-|to|–|—)\s*(?:Present|Current|\w+\s+\d{4}|\d{4})",
+            line,
+            flags=re.IGNORECASE,
+        )
+        or re.search(r"\b\d{4}\s*(?:-|to|–|—)\s*(?:Present|Current|\d{4})\b", line, flags=re.IGNORECASE)
+    )

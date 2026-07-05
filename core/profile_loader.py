@@ -6,6 +6,8 @@ from core import llm_cache
 from core.models import Profile
 from core.resume_extractor import extract_profile
 
+PROFILE_CACHE_VERSION = "profile-v2-completeness-floor"
+
 
 def build_profile(resume_text: str, llm: Any | None = None) -> Profile:
     """Build the candidate's Profile strictly from their uploaded resume text.
@@ -24,7 +26,7 @@ def build_profile(resume_text: str, llm: Any | None = None) -> Profile:
         return extract_profile("")
 
     extractor = getattr(llm, "model", "heuristic") if llm is not None else "heuristic"
-    key = llm_cache.make_key(f"profile|{extractor}", text)
+    key = llm_cache.make_key(f"{PROFILE_CACHE_VERSION}|{extractor}", text)
     cached = llm_cache.get(key)
     if isinstance(cached, Profile):
         return cached

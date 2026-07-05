@@ -20,6 +20,7 @@ from core.models import Mode, PipelineResult
 from core.planning_engine import build_answer_plan, build_cover_letter_plan, build_resume_plan
 from core.profile_loader import build_profile
 from core.validators.claim_validator import validate_claims
+from core.validators.completeness_validator import validate_completeness
 from core.validators.latex_validator import validate_latex
 from core.validators.output_format_validator import (
     validate_cover_letter_word_count,
@@ -161,6 +162,7 @@ def validate_pipeline_result(result: PipelineResult, profile: Any | None = None)
     if profile is None:
         profile = build_profile(result.parsed_input.resume_text)
     errors: list[str] = []
+    errors.extend(validate_completeness(result, profile))
     if result.resume_latex:
         errors.extend([f"resume: {error}" for error in validate_latex(result.resume_latex)])
         errors.extend([f"resume: {error}" for error in validate_style(result.resume_latex)])

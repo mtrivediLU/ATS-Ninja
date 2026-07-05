@@ -176,11 +176,42 @@ _LOCATION_HINTS = re.compile(
 
 def _extract_location(lines: list[str]) -> str:
     for line in lines[:12]:
-        if _LOCATION_HINTS.search(line):
-            pieces = [piece.strip() for piece in re.split(r"\s+\|\s+|•|,", line) if piece.strip()]
-            if pieces:
-                return ", ".join(pieces[:3])
+        cleaned = re.sub(r"^(?:[*•#]\s*|\(cid:\d+\)\s*)", "", line).strip()
+        if not cleaned or "|" in cleaned:
+            continue
+        if _looks_like_resume_location(cleaned):
+            return cleaned
     return ""
+
+
+_PROVINCES_AND_COUNTRIES = {
+    "alberta",
+    "british columbia",
+    "manitoba",
+    "new brunswick",
+    "newfoundland",
+    "northwest territories",
+    "nova scotia",
+    "nunavut",
+    "ontario",
+    "prince edward island",
+    "quebec",
+    "saskatchewan",
+    "yukon",
+    "canada",
+    "united states",
+    "usa",
+    "india",
+}
+
+
+def _looks_like_resume_location(line: str) -> bool:
+    lowered = line.lower()
+    if any(mode in lowered for mode in ["remote", "hybrid", "on-site", "onsite"]):
+        return True
+    if any(place in lowered for place in _PROVINCES_AND_COUNTRIES):
+        return bool(re.search(r"\b[A-Z][A-Za-z.'-]+,\s*[A-Z][A-Za-z.'-]+", line))
+    return bool(re.search(r"\b[A-Z][A-Za-z.'-]+,\s*[A-Z]{2}\b", line))
 
 
 def _first_match(pattern: str, text: str) -> str:
@@ -189,9 +220,19 @@ def _first_match(pattern: str, text: str) -> str:
 
 
 def _first_website(text: str, linkedin: str) -> str:
-    candidates = re.findall(r"(?:https?://)?(?:www\.)?[A-Za-z0-9-]+\.[A-Za-z]{2,}(?:/[^\s|]*)?", text)
-    for candidate in candidates:
+    email_domains = {
+        email.split("@", 1)[1].lower()
+        for email in re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text)
+        if "@" in email
+    }
+    pattern = re.compile(r"(?:https?://)?(?:www\.)?[A-Za-z0-9-]+\.[A-Za-z]{2,}(?:/[^\s|]*)?")
+    for match in pattern.finditer(text):
+        candidate = match.group(0)
         lowered = candidate.lower()
+        if match.start() > 0 and text[match.start() - 1] == "@":
+            continue
+        if lowered in email_domains:
+            continue
         if "linkedin.com" in lowered or "@" in lowered:
             continue
         if linkedin and candidate in linkedin:

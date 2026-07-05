@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from core.evidence_engine import classify_keyword
 from core.generation_pipeline import mode_from_text, run_pipeline
 from core.input_parser import extract_contacts, resolve_contacts
@@ -337,3 +339,157 @@ def test_email_from_uploaded_resume_is_kept_not_blocked() -> None:
     contacts = extract_contacts(WRAPPED_RESUME_TEXT)
     resolved = resolve_contacts(overrides={}, extracted=contacts)
     assert resolved.email == "jordan.rivera@oldschool.edu"
+
+
+# ---------------------------------------------------------------------------
+# Regression coverage for the PMI BI Developer failure reported from the real
+# resume/JD pair. The local PDF/JD attachments are used when available; the
+# text fallback keeps the test runnable outside this workstation.
+# ---------------------------------------------------------------------------
+
+PMI_RESUME_FALLBACK = """
+Mihir Trivedi
+Senior Software Engineer | Full-Stack, Data & AI Solutions
+Sudbury, Ontario, Canada
+PROFESSIONAL SUMMARY
+Senior Software Engineer with 8+ years designing production systems, data engineering, BI, and AI/ML applications.
+TECHNICAL SKILLS
+Languages: Python, Java, JavaScript, SQL, C, C++, PHP, HTML5, CSS3.
+Frontend: React, React Native, Next.js, Angular, Vue.js, Streamlit, Bootstrap, Tailwind, WordPress.
+Backend & APIs: Java Spring MVC, Hibernate, Node.js, RESTful APIs, Microservices, SaaS, WAMP.
+Databases & Data Engineering: PostgreSQL, MS SQL Server, SSIS, SSRS, dbt, ETL/ELT Pipelines, Data Warehousing, Data Modeling, Data Governance.
+BI & Analytics: Tableau, Power BI, Power Apps, Power Automate, ArcGIS, QGIS.
+Cloud & DevOps: Microsoft Azure, AWS, Google Cloud, Linux, Docker, Kubernetes, CI/CD, Git.
+AI & Machine Learning: OpenAI & Gemini APIs, LLM Integration, Predictive Modeling, ML Pipelines, Random Forest.
+Enterprise Platforms: Salesforce, HubSpot, SAP Hybris / SAP Commerce Cloud.
+Methodologies & Tools: Agile/Scrum, Waterfall, SDLC, Requirements Gathering, System Integration, Technical Documentation, Jira, Confluence.
+PROFESSIONAL EXPERIENCE
+Flosonics Medical Toronto, ON (Remote)
+Business Intelligence Developer Oct 2024 - Apr 2026
+• Enterprise Data Warehouse: Architected and built a centralized data warehouse using PostgreSQL and dbt, creating a unified source of truth across Finance, QA, Production, and HR.
+• ETL/ELT Pipelines: Designed and maintained pipelines ingesting medical device logs alongside Salesforce and HubSpot into a reliable analytics layer.
+• Predictive Analytics & Reporting: Developed predictive inventory models and automated Tableau dashboards, reducing manual reporting overhead by 40%.
+LoopX Sudbury, ON
+Software Development Consultant Jun 2024 - Jul 2025
+• End-to-End Ownership: Designed, built, and deployed the LoopX Safe and Smart Mining Data Platform end-to-end.
+• Real-Time Architecture: Developed AI-assisted dashboards and automated reporting systems for mining environments.
+City of Greater Sudbury Sudbury, ON
+Business Intelligence Analyst May 2024 - Aug 2024
+• Systems Integration: Integrated third-party vendor applications with SQL Server using SSIS, Python, and Google Cloud SQL Auth Proxy.
+• BI & Data Governance: Built Service-Based Budgeting systems using SQL and Power BI; trained end-users on data-governance standards.
+Minax Inc. Sudbury, ON
+Lead Software Developer Oct 2023 - May 2024
+• Offline-First Mobile Architecture: Architected a React Native application for Vale enabling underground data collection and automated reporting.
+• Process Automation: Automated Workplace Safety North forms using Power Automate, reducing engineer reporting time from 5 hours to minutes.
+Mineral Exploration Research Centre Sudbury, ON
+Research Associate (Data & ML) Mar 2022 - Jul 2023
+• Applied Machine Learning: Developed ML models using Random Forest, achieving a 99.5% F1 score.
+• Spatial Data Analysis: Processed geospatial datasets using ArcGIS and QGIS.
+Tata Consultancy Services (TCS) Mumbai, India
+Lead Software Engineer Nov 2017 - Oct 2021
+• Technical Leadership: Led a team of four engineers maintaining Edgepark, a high-traffic B2C e-commerce platform serving millions of users.
+• Global Deployments: Launched 13 B2B e-commerce platforms across Europe and North America on SAP Hybris / SAP Commerce Cloud.
+• CI/CD & Reliability: Optimized deployment workflows, maintaining 100% uptime for critical production services.
+EDUCATION
+Laurentian University Sudbury, ON
+Master of Computational Science (Thesis: ML for Geological Discovery) 2021 - 2023
+Gujarat Technological University India
+Bachelor of Computer Engineering (GPA: 3.3/4.0) 2013 - 2017
+CERTIFICATIONS
+Salesforce Certified Agentforce Specialist (AI-201) 2025
+Microsoft Certified: Azure Fundamentals (AZ-900) 2024
+Microsoft Certified: Power BI Data Analyst Associate (PL-300) 2024
+Microsoft Certified: Power Platform Developer Associate (PL-400) 2024
+"""
+
+PMI_JD_FALLBACK = """
+BI Developer - Fixed Term Contract
+Philip Morris International
+1500 Don Mills Road, Toronto, ON M3B 3L1
+Your day to day
+Design, develop, deploy, and maintain BI reporting suites, including dataflow, semantic models, frontend reports, dashboards, and BI solutions.
+Source, prepare, and integrate data for analysis from diverse business and operational processes.
+What we are looking for
+Proficiency in data visualization tools such as MSFT Power BI, Amazon QuickSight, or open-source frameworks like D3.js.
+Solid understanding of business intelligence concepts and tools, including SQL, ETL processes, and data warehousing.
+Experience with data warehousing solutions based on Snowflake, AWS Redshift, or open-source databases like PostgreSQL.
+Experience with data modeling and data integration techniques to ensure data quality.
+Ability to design and implement dashboards and reports that meet business requirements.
+Knowledge of DAX queries and SQL-like programming.
+Preferred Qualifications:
+Certification in relevant technologies such as Microsoft Certified: Data Analyst Associate, AWS Certified Data Analytics Specialty, or equivalent.
+Knowledge of DAX, Python and JavaScript.
+Familiarity with machine learning and predictive analytics.
+"""
+
+
+def _pmi_fixture_inputs() -> tuple[str, str]:
+    resume_pdf = Path("/Users/mihirtrivedi/Downloads/resume input.pdf")
+    jd_text = Path("/Users/mihirtrivedi/.codex/attachments/75cf10b9-2430-4ed4-8be7-e8986a7753ab/pasted-text.txt")
+    if resume_pdf.exists() and jd_text.exists():
+        from core.pdf_extractor import extract_text_from_pdf
+
+        with resume_pdf.open("rb") as handle:
+            return extract_text_from_pdf(handle), jd_text.read_text()
+    return PMI_RESUME_FALLBACK, PMI_JD_FALLBACK
+
+
+def test_pmi_bi_resume_jd_regression_keeps_complete_profile() -> None:
+    resume_text, jd = _pmi_fixture_inputs()
+    result = run_pipeline(
+        resume_text=resume_text,
+        job_description=jd,
+        requested_mode="resume and cover letter",
+        llm=False,
+    )
+
+    assert result.validation_errors == []
+    for company in [
+        "Flosonics Medical",
+        "LoopX",
+        "City of Greater Sudbury",
+        "Minax Inc.",
+        "Mineral Exploration Research Centre",
+        "Tata Consultancy Services",
+    ]:
+        assert company in result.resume_text
+    for skill in ["Power BI", "Tableau", "SQL", "PostgreSQL", "dbt", "ETL/ELT"]:
+        assert skill in result.resume_text
+    assert "Education" in result.resume_text
+    assert "Certifications" in result.resume_text
+    assert "Microsoft Certified: Power BI Data Analyst Associate (PL-300)" in result.resume_text
+    assert "Work Authorization:" not in result.resume_text
+    assert "Relocation:" not in result.resume_text
+    assert "I also the candidate" not in result.cover_letter_text
+    assert "Based in Senior Software Engineer" not in result.cover_letter_text
+    assert not validate_cover_letter_word_count(result.cover_letter_text)
+
+
+def test_near_empty_llm_resume_parse_falls_back_to_complete_heuristic() -> None:
+    from core.resume_extractor import extract_profile
+
+    class NearEmptyLLM:
+        model = "near-empty"
+
+        def invoke(self, _prompt: str) -> dict[str, str]:
+            return {
+                "content": (
+                    '{"contact": {}, "experiences": [], "education": [], '
+                    '"certifications": [], "skills_listed": ["AWS"], "summary_text": ""}'
+                )
+            }
+
+    profile = extract_profile(PMI_RESUME_FALLBACK, llm=NearEmptyLLM())
+    assert len(profile.experiences) == 6
+    assert len(profile.education) == 2
+    assert len(profile.certifications) == 4
+    assert "power bi" in profile.tier_a
+
+
+def test_style_validator_flags_reported_generic_filler() -> None:
+    noisy = "Dedicated professional ready to drive data-driven decision making in a fast-paced environment with tailored solutions."
+    errors = validate_style(noisy)
+    assert any("dedicated professional" in error for error in errors)
+    assert any("drive data-driven decision making" in error for error in errors)
+    assert any("fast-paced environment" in error for error in errors)
+    assert any("tailored solutions" in error for error in errors)
