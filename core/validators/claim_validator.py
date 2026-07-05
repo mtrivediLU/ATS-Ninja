@@ -6,6 +6,14 @@ from core.models import Profile
 
 
 PRODUCTION_WORDS = {"production", "owned", "built", "shipped", "launched", "deployed"}
+NON_EMPLOYER_HEADINGS = {
+    "selected experience",
+    "professional experience",
+    "work experience",
+    "experience",
+    "projects",
+    "employment history",
+}
 
 # High-risk factual tokens that must be traceable to the uploaded resume:
 # percentages, money, counted nouns (users/customers/etc), and team sizes.
@@ -91,12 +99,21 @@ def _near_production_claim(text: str, term: str) -> bool:
 
 def _validate_official_titles(text: str, profile: Profile) -> list[str]:
     errors: list[str] = []
-    for experience in profile.experiences:
-        if experience.company and experience.title and experience.company in text:
-            company_index = text.find(experience.company)
-            block = text[company_index : company_index + 320]
-            if experience.title not in block:
-                errors.append(f"official title altered for {experience.company}")
+    experience_text = _section_between(text, "Professional Experience", "Education") or text
+    official_titles = {
+        _normalize(experience.company): experience.title
+        for experience in profile.experiences
+        if experience.company and experience.title
+    }
+    for company, _location, title, dates in _iter_resume_subheadings(experience_text):
+        normalized_company = _normalize(company)
+        if _is_non_employer_heading(normalized_company):
+            continue
+        if not _looks_like_experience_row(company, title, dates):
+            continue
+        expected_title = official_titles.get(normalized_company)
+        if expected_title and expected_title != title:
+            errors.append(f"official title altered for {company}")
     return errors
 
 
@@ -104,14 +121,87 @@ def _validate_known_companies(text: str, profile: Profile) -> list[str]:
     errors: list[str] = []
     allowed = [_normalize(company) for company in profile.allowed_companies if company]
     experience_text = _section_between(text, "Professional Experience", "Education") or text
-    for match in re.finditer(r"\\resumeSubheading\s*\{([^}]+)\}", experience_text):
-        company = re.sub(r"\\href\{[^}]+\}\{([^}]+)\}", r"\1", match.group(1)).strip()
-        company = _normalize(_latex_unescape(company))
+    for company, _location, title, dates in _iter_resume_subheadings(experience_text):
+        normalized_company = _normalize(company)
+        if _is_non_employer_heading(normalized_company):
+            continue
+        if not _looks_like_experience_row(company, title, dates):
+            continue
+        company = normalized_company
         if not company:
             continue
         if not any(company in known or known in company for known in allowed):
             errors.append(f"invented or unsupported employer: {company}")
     return errors
+
+
+def _iter_resume_subheadings(text: str) -> list[tuple[str, str, str, str]]:
+    """Return parsed company/location/title/date fields from resumeSubheading calls."""
+    rows: list[tuple[str, str, str, str]] = []
+    command = r"\resumeSubheading"
+    index = 0
+    while True:
+        start = text.find(command, index)
+        if start == -1:
+            break
+        args, end = _read_brace_args(text, start + len(command), expected=4)
+        if len(args) == 4:
+            rows.append(tuple(_clean_latex_field(arg) for arg in args))  # type: ignore[arg-type]
+        index = end if end > start else start + len(command)
+    return rows
+
+
+def _read_brace_args(text: str, start: int, expected: int) -> tuple[list[str], int]:
+    args: list[str] = []
+    index = start
+    while len(args) < expected and index < len(text):
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text) or text[index] != "{":
+            break
+        end = _matching_brace(text, index)
+        if end == -1:
+            break
+        args.append(text[index + 1 : end])
+        index = end + 1
+    return args, index
+
+
+def _matching_brace(text: str, start: int) -> int:
+    depth = 0
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _clean_latex_field(value: str) -> str:
+    cleaned = re.sub(r"\\href\{[^}]+\}\{([^}]+)\}", r"\1", value)
+    return re.sub(r"\s+", " ", _latex_unescape(cleaned)).strip()
+
+
+def _is_non_employer_heading(normalized_value: str) -> bool:
+    return normalized_value in NON_EMPLOYER_HEADINGS
+
+
+def _looks_like_experience_row(company: str, title: str, dates: str) -> bool:
+    if not company.strip():
+        return False
+    if _is_non_employer_heading(_normalize(company)):
+        return False
+    return bool(title.strip() or dates.strip())
 
 
 def _term_in(term: str, text: str) -> bool:

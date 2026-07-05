@@ -114,6 +114,40 @@ def test_official_titles_are_not_altered() -> None:
     assert any("official title altered" in error for error in validate_claims(text, PROFILE))
 
 
+def test_selected_experience_heading_is_not_treated_as_employer() -> None:
+    output = (
+        "\\section{Professional Experience}\n"
+        "\\resumeSubHeadingListStart\n"
+        "\\resumeSubheading{Selected Experience}{}{}{}\n"
+        "\\resumeItemListStart\n"
+        "\\resumeItem{Built Python pipelines.}\n"
+        "\\resumeItemListEnd\n"
+        "\\resumeSubHeadingListEnd\n"
+        "\\section{Education}\n"
+    )
+    errors = validate_claims(output, PROFILE)
+    assert "invented or unsupported employer: selected experience" not in errors
+
+
+def test_true_invented_employer_is_still_blocked() -> None:
+    output = (
+        "\\section{Professional Experience}\n"
+        "\\resumeSubHeadingListStart\n"
+        "\\resumeSubheading{Fake Labs}{Remote}{Software Engineer}{2021 to 2024}\n"
+        "\\resumeSubHeadingListEnd\n"
+        "\\section{Education}\n"
+    )
+    assert any("invented or unsupported employer: fake labs" in error for error in validate_claims(output, PROFILE))
+
+
+def test_formatting_errors_are_not_fatal_app_blocks() -> None:
+    from app import _is_fatal_validation_error
+
+    assert not _is_fatal_validation_error("resume: missing \\end{document}")
+    assert not _is_fatal_validation_error("resume: banned style phrase: robust")
+    assert _is_fatal_validation_error("resume: invented or unsupported employer: fake labs")
+
+
 def test_no_em_dash_en_dash_or_double_hyphen() -> None:
     errors = validate_style("AI engineer — data engineer – software -- resume")
     assert "em dash is not allowed" in errors

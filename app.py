@@ -123,8 +123,6 @@ def _is_fatal_validation_error(error: str) -> bool:
         "email not present in resume",
         "retired email used",
         "official title altered",
-        "missing \\end{document}",
-        "unbalanced braces",
     )
     return any(marker in error for marker in fatal_markers)
 
