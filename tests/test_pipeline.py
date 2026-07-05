@@ -43,7 +43,7 @@ PROFILE = _sample_profile()
 
 
 def test_contact_override_precedence() -> None:
-    extracted = extract_contacts("Jordan Rivera\n249-360-5901\nold@example.com")
+    extracted = extract_contacts("Jordan Rivera\n555-201-9876\nold@example.com")
     contacts = resolve_contacts(
         overrides={"email": "new@example.com"},
         extracted=extracted,
@@ -129,7 +129,7 @@ def test_cover_letter_word_count_is_280_to_320() -> None:
     jd = _sample_jd()
     result = run_pipeline(
         resume_text=(
-            "Jordan Rivera\njordan@example.com\n249-360-5901\n\n"
+            "Jordan Rivera\njordan@example.com\n555-201-9876\n\n"
             "Experience\nAcme Corp Remote\nSoftware Engineer 2020 to 2023\n"
             "- Built Python and SQL data pipelines.\n"
         ),
@@ -205,3 +205,101 @@ def _sample_jd() -> str:
         "This role supports healthcare data operations and requires clear documentation. "
         "The team uses Python, SQL, LLMs, Azure, Docker, Tableau, and ETL patterns."
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the upload -> generate failure: the quality gates were
+# flagging the candidate's own resume content (banned verbs, scale phrases,
+# personal email) and PDF line wrapping was parsed into garbage employers,
+# which blocked all output in the app.
+# ---------------------------------------------------------------------------
+
+WRAPPED_RESUME_TEXT = (
+    "Jordan Rivera\n"
+    "555-201-3344 | jordan.rivera@oldschool.edu | linkedin.com/in/jordanrivera\n"
+    "PROFESSIONAL EXPERIENCE\n"
+    "Acme Analytics Toronto, ON\n"
+    "Senior Data Engineer Jan 2020 - Mar 2024\n"
+    "- Architected and built a centralized data warehouse using PostgreSQL, creating a\n"
+    "unified source of truth serving millions of users across the platform.\n"
+    "- Optimized deployment workflows, maintaining 100% uptime for critical\n"
+    "production services and reducing release time by 40%.\n"
+    "Beta Retail Group Ottawa, ON\n"
+    "Data Analyst Jun 2016 - Dec 2019\n"
+    "- Built SQL reporting for a team of 12 analysts.\n"
+    "EDUCATION\n"
+    "Carleton University Ottawa, ON\n"
+    "Bachelor of Computer Science 2012 - 2016\n"
+)
+
+
+def test_wrapped_pdf_lines_do_not_become_garbage_employers() -> None:
+    from core.resume_extractor import extract_profile
+
+    profile = extract_profile(WRAPPED_RESUME_TEXT)
+    companies = [experience.company for experience in profile.experiences]
+    assert any("Acme Analytics" in company for company in companies)
+    assert any("Beta Retail" in company for company in companies)
+    for company in companies:
+        assert "unified source of truth" not in company.lower()
+        assert "millions of users" not in company.lower()
+    first = profile.experiences[0]
+    assert first.title == "Senior Data Engineer"
+    assert any("millions of users" in bullet for bullet in first.bullets)
+
+
+def test_pdf_extractor_merges_wrapped_continuation_lines() -> None:
+    from core.pdf_extractor import _clean_extracted_text
+
+    text = _clean_extracted_text(
+        "- Reduced engineer reporting\ntime from 5 hours to minutes and simplified workflows.\nEDUCATION"
+    )
+    lines = text.splitlines()
+    assert lines[0].endswith("simplified workflows.")
+    assert lines[1] == "EDUCATION"
+
+
+def test_candidates_own_scale_claims_are_supported_evidence() -> None:
+    profile = _sample_profile()
+    profile.raw_markdown = WRAPPED_RESUME_TEXT
+    output = "Professional Experience\n- Maintained 100% uptime serving millions of users.\nEducation"
+    errors = validate_claims(output, profile)
+    assert not any("unsupported" in error for error in errors)
+
+
+def test_metrics_not_in_resume_are_flagged() -> None:
+    profile = _sample_profile()
+    profile.raw_markdown = WRAPPED_RESUME_TEXT
+    errors = validate_claims("Increased revenue by 300% for 5 million customers.", profile)
+    assert any("300%" in error for error in errors)
+
+
+def test_soften_banned_style_output_passes_style_validator() -> None:
+    from core.output_repair import soften_banned_style
+
+    noisy = (
+        "Architected and spearheaded a robust, seamless, mission-critical platform. "
+        "Leveraged cutting-edge tools and streamlined end-to-end workflows. "
+        "Results-driven and detail-oriented professional passionate about innovative solutions."
+    )
+    softened = soften_banned_style(noisy)
+    assert not validate_style(softened)
+    assert "Designed" in softened
+
+
+def test_full_pipeline_with_resume_containing_banned_words_and_scale_claims() -> None:
+    result = run_pipeline(
+        resume_text=WRAPPED_RESUME_TEXT,
+        job_description=_sample_jd(),
+        requested_mode="resume and cover letter",
+        llm=False,
+    )
+    assert result.resume_text
+    assert result.cover_letter_text
+    assert result.validation_errors == []
+
+
+def test_email_from_uploaded_resume_is_kept_not_blocked() -> None:
+    contacts = extract_contacts(WRAPPED_RESUME_TEXT)
+    resolved = resolve_contacts(overrides={}, extracted=contacts)
+    assert resolved.email == "jordan.rivera@oldschool.edu"

@@ -380,70 +380,85 @@ def _detect_heading(line: str) -> str | None:
 
 
 def _heuristic_entries(lines: list[str], *, kind: str) -> list[dict[str, Any]]:
+    """Group section lines into entries.
+
+    Layout assumption (the dominant resume convention): each entry's header
+    lines (company/institution, optionally title) appear immediately BEFORE
+    the line carrying its date range, and bullets follow. The header buffer
+    therefore always belongs to the entry whose date line closes it, never
+    to the previous entry. Non-bullet lines that start lowercase while an
+    entry has open bullets are treated as PDF wrap continuations of the
+    last bullet.
+    """
+    primary = "company" if kind == "experience" else "institution"
+    secondary = "title" if kind == "experience" else "degree"
     entries: list[dict[str, Any]] = []
-    buffer: list[str] = []
+    header_buffer: list[str] = []
     current: dict[str, Any] | None = None
 
-    def flush_buffer_as_header(target: dict[str, Any]) -> None:
-        non_bullets = [line for line in buffer if not _is_bullet(line)]
-        if kind == "experience":
-            if len(non_bullets) >= 2:
-                target["company"] = non_bullets[0]
-                target["title"] = non_bullets[1]
-            elif len(non_bullets) == 1:
-                target["company"] = non_bullets[0]
-        else:
-            if len(non_bullets) >= 2:
-                target["institution"] = non_bullets[0]
-                target["degree"] = non_bullets[1]
-            elif len(non_bullets) == 1:
-                target["institution"] = non_bullets[0]
+    def new_entry() -> dict[str, Any]:
+        return {primary: "", secondary: "", "location": "", "dates": "", "bullets": []}
+
+    def finalize(entry: dict[str, Any] | None) -> None:
+        if entry and (entry[primary] or entry[secondary] or entry["bullets"]):
+            entries.append(entry)
+
+    def apply_header(entry: dict[str, Any], header_lines: list[str]) -> None:
+        if not header_lines:
+            return
+        head = header_lines[0]
+        suffix = ""
+        paren_match = re.search(r"\s*\(([^)]*)\)\s*$", head)
+        if paren_match:
+            suffix = f" ({paren_match.group(1)})"
+            head = head[: paren_match.start()].rstrip()
+        location_match = _LOCATION_TAIL.search(head)
+        if location_match and location_match.start() > 0:
+            entry["location"] = entry["location"] or (location_match.group(1).strip() + suffix)
+            head = head[: location_match.start()].strip(" |-,")
+        entry[primary] = head
+        if len(header_lines) > 1 and not entry[secondary]:
+            entry[secondary] = header_lines[1]
 
     for line in lines:
         if not line:
             continue
+
         date_match = _DATE_RANGE.search(line)
         if date_match:
-            if current is not None:
-                flush_buffer_as_header(current)
-                entries.append(current)
-            current = {"bullets": []}
-            remainder = (line[: date_match.start()] + " " + line[date_match.end() :]).strip(" |-")
+            finalize(current)
+            current = new_entry()
             current["dates"] = date_match.group(0)
+            remainder = (line[: date_match.start()] + " " + line[date_match.end() :]).strip(" |-,")
             location_match = _LOCATION_TAIL.search(remainder)
             if location_match:
                 current["location"] = location_match.group(1).strip()
-                remainder = remainder[: location_match.start()].strip(" |-")
+                remainder = remainder[: location_match.start()].strip(" |-,")
             if remainder:
-                if kind == "experience":
-                    current["title"] = remainder
-                else:
-                    current["degree"] = remainder
-            buffer = []
+                current[secondary] = remainder
+            apply_header(current, header_buffer)
+            header_buffer = []
             continue
 
-        if current is not None and _is_bullet(line):
+        if _is_bullet(line):
+            if current is None:
+                current = new_entry()
+                apply_header(current, header_buffer)
+                header_buffer = []
             current["bullets"].append(line)
+            continue
+
+        if current is not None and current["bullets"] and line[0].islower():
+            current["bullets"][-1] = f"{current['bullets'][-1]} {line}"
         else:
-            buffer.append(line)
+            header_buffer.append(line)
 
-    if current is not None:
-        flush_buffer_as_header(current)
-        entries.append(current)
-    elif buffer:
-        # No date lines found at all; treat the whole block as one entry.
-        non_bullets = [line for line in buffer if not _is_bullet(line)]
-        bullets = [line for line in buffer if _is_bullet(line)]
-        if non_bullets or bullets:
-            entry: dict[str, Any] = {"bullets": bullets, "dates": ""}
-            if kind == "experience":
-                entry["company"] = non_bullets[0] if non_bullets else ""
-                entry["title"] = non_bullets[1] if len(non_bullets) > 1 else ""
-            else:
-                entry["institution"] = non_bullets[0] if non_bullets else ""
-                entry["degree"] = non_bullets[1] if len(non_bullets) > 1 else ""
-            entries.append(entry)
-
+    finalize(current)
+    if not entries and header_buffer:
+        # No date lines and no bullets found; treat the block as one entry.
+        entry = new_entry()
+        apply_header(entry, header_buffer)
+        finalize(entry)
     return entries
 
 

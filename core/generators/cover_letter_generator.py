@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from core.latex_renderer import cover_letter_to_latex
 from core.models import CoverLetterPlan
+from core.output_repair import soften_banned_style
 
 
 def generate_cover_letter_text(plan: CoverLetterPlan) -> str:
     """Render cover-letter body text from a structured plan."""
-    return _strip_banned_dashes("\n\n".join(plan.body_paragraphs).strip())
+    return soften_banned_style(_strip_banned_dashes("\n\n".join(plan.body_paragraphs).strip()))
 
 
 def generate_cover_letter_latex(plan: CoverLetterPlan) -> str:

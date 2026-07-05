@@ -110,6 +110,25 @@ def validate_inputs(
     return True
 
 
+def _is_fatal_validation_error(error: str) -> bool:
+    """Only structural or truth-critical failures block delivery.
+
+    Invented employers/metrics/emails mean the output cannot be trusted;
+    broken LaTeX means it cannot be compiled. Everything else (residual
+    wording, word counts) is surfaced as a warning with the output.
+    """
+    fatal_markers = (
+        "invented or unsupported employer",
+        "unsupported metric",
+        "email not present in resume",
+        "retired email used",
+        "official title altered",
+        "missing \\end{document}",
+        "unbalanced braces",
+    )
+    return any(marker in error for marker in fatal_markers)
+
+
 def run_generation_pipeline(
     uploaded_file: Any,
     job_description: str,
@@ -142,15 +161,21 @@ def run_generation_pipeline(
         st.error(f"The v5 generation pipeline could not complete. Details: {exc}")
         return None
 
-    if pipeline_result.validation_errors:
-        st.error("Quality gates blocked the output:\n\n" + "\n".join(pipeline_result.validation_errors[:8]))
-        return None
-
     tailored_resume = pipeline_result.resume_text
     cover_letter = pipeline_result.cover_letter_text
     if not tailored_resume:
         st.error("The resume generator returned an empty result. Please try again with a job description.")
         return None
+
+    fatal_errors = [error for error in pipeline_result.validation_errors if _is_fatal_validation_error(error)]
+    if fatal_errors:
+        st.error("Quality gates blocked the output:\n\n" + "\n".join(fatal_errors[:8]))
+        return None
+    if pipeline_result.validation_errors:
+        st.warning(
+            "Review these before sending (the output is still usable):\n\n"
+            + "\n".join(f"- {error}" for error in pipeline_result.validation_errors[:8])
+        )
 
     after_score = calculate_ats_score(tailored_resume, job_description)
     comparison = compare_scores(before_score, after_score)

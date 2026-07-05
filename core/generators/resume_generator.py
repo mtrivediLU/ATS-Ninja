@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from core.latex_renderer import resume_to_latex
 from core.models import ResumePlan
+from core.output_repair import soften_banned_style
 
 
 def generate_resume_text(plan: ResumePlan) -> str:
@@ -48,7 +49,7 @@ def generate_resume_text(plan: ResumePlan) -> str:
         if cert.link:
             parts.append(cert.link)
         lines.append("- " + " | ".join(parts))
-    return _strip_banned_dashes("\n".join(lines).strip())
+    return soften_banned_style(_strip_banned_dashes("\n".join(lines).strip()))
 
 
 def generate_resume_latex(plan: ResumePlan) -> str:

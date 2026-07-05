@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.models import AnswerPlan
+from core.output_repair import soften_banned_style
 
 
 def generate_answers_text(plan: AnswerPlan) -> str:
@@ -8,7 +9,7 @@ def generate_answers_text(plan: AnswerPlan) -> str:
     lines: list[str] = []
     for index, (question, answer) in enumerate(zip(plan.questions, plan.answers, strict=False), start=1):
         lines.append(f"**Q{index}: {question.strip()}**")
-        lines.append(answer.strip())
+        lines.append(soften_banned_style(answer.strip()))
         lines.append("")
     if plan.placeholders:
         lines.append("Placeholders used: " + ", ".join(plan.placeholders))

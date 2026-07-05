@@ -16,6 +16,7 @@ from core.models import (
     Profile,
     ResumePlan,
 )
+from core.output_repair import soften_banned_style
 from core.resume_extractor import find_metrics, term_in_text
 from core.validators.style_validator import validate_style
 
@@ -348,17 +349,25 @@ def _select_experience(
             if _metric_reused(bullet, used_metrics, profile.supported_metrics):
                 continue
             _remember_metrics(bullet, used_metrics, profile.supported_metrics)
-            chosen.append(bullet)
+            chosen.append(soften_banned_style(bullet))
             if len(chosen) >= 5:
                 break
         if chosen:
             entries.append((experience, chosen))
 
     all_originals = [bullet for _, chosen in entries for bullet in chosen]
-    if llm is not None and all_originals:
-        rewritten_flat = _rewrite_bullets_batch(all_originals, jd_profile, keywords, profile, llm)
-    else:
-        rewritten_flat = all_originals
+    # Bullets already carrying two or more JD keywords are targeted as-is;
+    # rewriting them spends tokens for little gain and risks quality drift.
+    # Only the under-aligned bullets go to the model.
+    needs_rewrite = [
+        index for index, bullet in enumerate(all_originals) if _keyword_hits(bullet, keywords) < 2
+    ]
+    rewritten_flat = list(all_originals)
+    if llm is not None and needs_rewrite:
+        batch = [all_originals[index] for index in needs_rewrite]
+        rewritten_batch = _rewrite_bullets_batch(batch, jd_profile, keywords, profile, llm)
+        for position, index in enumerate(needs_rewrite):
+            rewritten_flat[index] = rewritten_batch[position]
 
     selected: list[Experience] = []
     cursor = 0
@@ -410,7 +419,7 @@ def _rewrite_bullets_batch(
         "in the same order. No bullet numbers inside the strings, no commentary, no markdown fences."
     )
 
-    data = invoke_json(llm, prompt)
+    data = invoke_json(llm, prompt, retries=1)
     if not isinstance(data, list) or len(data) != len(bullets):
         return bullets
 
@@ -453,6 +462,11 @@ def _mentions_tier_c(text: str, profile: Profile) -> bool:
 def _bullet_score(bullet: str, keywords: list[str]) -> int:
     lowered = bullet.lower()
     return sum(2 for keyword in keywords if keyword in lowered) + len(find_metrics(bullet))
+
+
+def _keyword_hits(bullet: str, keywords: list[str]) -> int:
+    lowered = bullet.lower()
+    return sum(1 for keyword in keywords if keyword in lowered)
 
 
 def _metric_reused(bullet: str, used_metrics: set[str], supported_metrics: list[str]) -> bool:
@@ -739,7 +753,9 @@ def _clean_llm_line(text: str) -> str:
     cleaned = re.sub(r"\s*```$", "", cleaned)
     cleaned = cleaned.strip("\"'")
     cleaned = cleaned.replace("—", ",").replace("–", " to ").replace("--", "-")
-    return cleaned.strip()
+    # Repair cliche wording deterministically rather than burning a retry
+    # round trip on a style-validation failure.
+    return soften_banned_style(cleaned.strip())
 
 
 def _dedupe(items: list[str]) -> list[str]:

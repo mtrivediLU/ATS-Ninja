@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core import llm_cache
 from core.models import Profile
 from core.resume_extractor import extract_profile
 
@@ -13,8 +14,25 @@ def build_profile(resume_text: str, llm: Any | None = None) -> Profile:
     downstream (skills tiers, experience bullets, education, certifications)
     is derived from what the candidate actually submitted, not from any
     hardcoded personal data.
+
+    The parsed profile is cached on disk keyed by the resume content hash,
+    so the same resume never pays for LLM extraction twice, including
+    across app restarts and Streamlit reruns.
     """
-    return extract_profile(resume_text, llm=llm)
+    text = (resume_text or "").strip()
+    if not text:
+        return extract_profile("")
+
+    extractor = getattr(llm, "model", "heuristic") if llm is not None else "heuristic"
+    key = llm_cache.make_key(f"profile|{extractor}", text)
+    cached = llm_cache.get(key)
+    if isinstance(cached, Profile):
+        return cached
+
+    profile = extract_profile(text, llm=llm)
+    if profile.experiences or profile.tier_a:
+        llm_cache.set(key, profile)
+    return profile
 
 
 def empty_profile() -> Profile:
